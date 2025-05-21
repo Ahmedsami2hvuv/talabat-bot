@@ -136,8 +136,7 @@ app.add_handler(CommandHandler("start", start))
 
 conv_handler = ConversationHandler(
     entry_points=[
-        MessageHandler(filters.TEXT & ~filters.COMMAND, receive_order),
-        CallbackQueryHandler(product_selected)
+        MessageHandler(filters.TEXT & ~filters.COMMAND, receive_order)
     ],
     states={
         ASK_BUY: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_buy_price)],
@@ -146,5 +145,4 @@ conv_handler = ConversationHandler(
     fallbacks=[]
 )
 app.add_handler(conv_handler)
-print("Bot is running...")
-app.run_polling()
+app.add_handler(CallbackQueryHandler(product_selected))
