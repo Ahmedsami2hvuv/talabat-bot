@@ -101,20 +101,22 @@ async def receive_sell_price(update: Update, context: ContextTypes.DEFAULT_TYPE)
         for p in order["products"]
     ):
         summary = []
-        total_buy = total_sell = 0
-        for p in order["products"]:
-            buy = pricing[order_id][p]["buy"]
-            sell = pricing[order_id][p]["sell"]
-            profit = sell - buy
-            total_buy += buy
-            total_sell += sell
-            summary.append(f"{p} - شراء: {buy}, بيع: {sell}, ربح: {profit}")
-        net_profit = total_sell - total_buy
-        result = f"عنوان الزبون: {order['title']}\n\n" + result
-        result = "\n".join(summary)
-        result += f"\n\nالمجموع شراء: {total_buy}\nالمجموع بيع: {total_sell}\nالربح الكلي: {net_profit}"
-        await update.message.reply_text(result)
+total_buy = total_sell = 0
+for p in order["products"]:
+    buy = pricing[order_id][p]["buy"]
+    sell = pricing[order_id][p]["sell"]
+    profit = sell - buy
+    total_buy += buy
+    total_sell += sell
+    summary.append(f"{p} - شراء: {buy}, بيع: {sell}, ربح: {profit}")
 
+net_profit = total_sell - total_buy
+
+# هذا السطر الصحيح يكون قبل إنشاء result
+result = f"عنوان الزبون: {order['title']}\n\n" + "\n".join(summary)
+
+result += f"\n\nالمجموع شراء: {total_buy}\nالمجموع بيع: {total_sell}\nالربح الكلي: {net_profit}"
+await update.message.reply_text(result)
         customer_lines = []
         running_total = 0
         for p in order["products"]:
