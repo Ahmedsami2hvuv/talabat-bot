@@ -1,4 +1,4 @@
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, Message
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder, ContextTypes, CommandHandler,
     MessageHandler, CallbackQueryHandler, ConversationHandler, filters
@@ -105,7 +105,7 @@ async def receive_sell_price(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     order = orders[order_id]
     if all(p in pricing[order_id] and 'buy' in pricing[order_id][p] and 'sell' in pricing[order_id][p] for p in order["products"]):
-        summary = []
+        summary = [f"عنوان الزبون: {order['title']}"]
         total_buy = total_sell = 0
         for p in order["products"]:
             buy = pricing[order_id][p]["buy"]
