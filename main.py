@@ -110,6 +110,7 @@ async def receive_sell_price(update: Update, context: ContextTypes.DEFAULT_TYPE)
             total_sell += sell
             summary.append(f"{p} - شراء: {buy}, بيع: {sell}, ربح: {profit}")
         net_profit = total_sell - total_buy
+        result = f"عنوان الزبون: {order['title']}\n\n" + result
         result = "\n".join(summary)
         result += f"\n\nالمجموع شراء: {total_buy}\nالمجموع بيع: {total_sell}\nالربح الكلي: {net_profit}"
         await update.message.reply_text(result)
