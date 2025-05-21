@@ -8,7 +8,7 @@ import uuid
 orders = {}
 pricing = {}
 current_product = {}
-last_button_message = {}
+last_button_message = {}  # order_id -> message_id
 
 ASK_BUY, ASK_SELL = range(2)
 TOKEN = "7508502359:AAFtlXVMJGUiWaeqJZc0o03Yy-SgVYE_xz8"
@@ -48,9 +48,9 @@ async def show_buttons(chat_id, context, user_id, order_id):
     markup = InlineKeyboardMarkup(buttons)
 
     # حذف الرسالة السابقة إن وُجدت
-    if user_id in last_button_message:
+    if order_id in last_button_message:
         try:
-            await context.bot.delete_message(chat_id=chat_id, message_id=last_button_message[user_id])
+            await context.bot.delete_message(chat_id=chat_id, message_id=last_button_message[order_id])
         except:
             pass
 
@@ -60,8 +60,7 @@ async def show_buttons(chat_id, context, user_id, order_id):
         reply_markup=markup
     )
 
-    # حفظ رقم الرسالة الجديدة
-    last_button_message[user_id] = msg.message_id
+    last_button_message[order_id] = msg.message_id
 
 async def product_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
