@@ -208,9 +208,9 @@ async def show_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # إعداد البوت
 app = ApplicationBuilder().token(TOKEN).build()
 app.add_handler(CommandHandler("start", start))
-app.add_handler(MessageHandler(filters.TEXT & filters.Regex("^الارباح$|^كمله الارباح$"), show_profit))
+app.add_handler(MessageHandler(filters.TEXT & filters.Regex("^الارباح$|^ارباح$"), show_profit))
 app.add_handler(MessageHandler(filters.TEXT & filters.Regex("^تصفير$"), reset_all))
-app.add_handler(MessageHandler(filters.TEXT & filters.Regex("^التقارير$"), show_report))
+app.add_handler(MessageHandler(filters.TEXT & filters.Regex("^التقارير$|^تقرير$|^تقارير$"), show_report))
 
 conv_handler = ConversationHandler(
     entry_points=[
