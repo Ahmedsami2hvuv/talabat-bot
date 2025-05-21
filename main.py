@@ -10,7 +10,7 @@ pricing = {}
 current_product = {}
 
 ASK_BUY, ASK_SELL = range(2)
-TOKEN = "7508502359:AAFtlXVMJGUiWaeqJZc0o03Yy-SgVYE_xz8"
+TOKEN = "7508502359:AAFpTd7qBnpTDkLH5GI7i8q8EZBR211DY9g"
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("أرسل عنوان الطلب في السطر الأول، ثم المنتجات كل واحدة في سطر.")
@@ -136,7 +136,8 @@ app.add_handler(CommandHandler("start", start))
 
 conv_handler = ConversationHandler(
     entry_points=[
-        MessageHandler(filters.TEXT & ~filters.COMMAND, receive_order)
+        MessageHandler(filters.TEXT & ~filters.COMMAND, receive_order),
+        CallbackQueryHandler(product_selected)
     ],
     states={
         ASK_BUY: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_buy_price)],
@@ -145,4 +146,5 @@ conv_handler = ConversationHandler(
     fallbacks=[]
 )
 app.add_handler(conv_handler)
-app.add_handler(CallbackQueryHandler(product_selected))
+print("Bot is running...")
+app.run_polling()
