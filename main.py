@@ -5,18 +5,19 @@ from telegram.ext import (
 )
 import uuid
 import os
+from collections import Counter
 
 orders = {}
 pricing = {}
 current_product = {}
 last_button_message = {}
 invoice_numbers = {}
-daily_profit = 0.0  # الربح المتراكم
+daily_profit = 0.0
 
 ASK_BUY, ASK_SELL = range(2)
 TOKEN = "7508502359:AAFtlXVMJGUiWaeqJZc0o03Yy-SgVYE_xz8"
 
-# إعداد رقم فاتورة تسلسلي
+# رقم الفاتورة التسلسلي
 counter_file = "invoice_counter.txt"
 if not os.path.exists(counter_file):
     with open(counter_file, "w") as f:
@@ -162,19 +163,54 @@ async def receive_sell_price(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     return ConversationHandler.END
 
-# أوامر الأرباح
-async def profit(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# أوامر خاصة
+async def show_profit(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"الربح التراكمي: {daily_profit} دينار")
 
-async def reset_profit(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    global daily_profit
-    daily_profit = 0
-    await update.message.reply_text("تم تصفير الأرباح.")
+async def reset_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    global daily_profit, orders, pricing, invoice_numbers, last_button_message
+    daily_profit = 0.0
+    orders.clear()
+    pricing.clear()
+    invoice_numbers.clear()
+    last_button_message.clear()
+    await update.message.reply_text("تم تصفير الأرباح ومسح كل الطلبات.")
 
+async def show_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    total_orders = len(orders)
+    total_products = sum(len(o["products"]) for o in orders.values())
+    total_buy = total_sell = 0
+    product_counter = Counter()
+
+    details = []
+    for order_id, order in orders.items():
+        invoice = invoice_numbers.get(order_id, "غير معروف")
+        details.append(f"\nفاتورة: {invoice}\nعنوان: {order['title']}")
+        for p in order["products"]:
+            product_counter[p] += 1
+            if p in pricing[order_id]:
+                buy = pricing[order_id][p].get("buy", 0)
+                sell = pricing[order_id][p].get("sell", 0)
+                profit = sell - buy
+                total_buy += buy
+                total_sell += sell
+                details.append(f"{p} - شراء: {buy}, بيع: {sell}, ربح: {profit}")
+
+    top_product = product_counter.most_common(1)[0][0] if product_counter else "لا يوجد"
+
+    result = "\n".join(details)
+    result += f"\n\nإجمالي الطلبات: {total_orders}"
+    result += f"\nإجمالي المنتجات: {total_products}"
+    result += f"\nأكثر منتج تم طلبه: {top_product}"
+    result += f"\n\nمجموع الشراء: {total_buy}\nمجموع البيع: {total_sell}\nمجموع الأرباح: {total_sell - total_buy}"
+    await update.message.reply_text(result)
+
+# إعداد البوت
 app = ApplicationBuilder().token(TOKEN).build()
 app.add_handler(CommandHandler("start", start))
-app.add_handler(CommandHandler("profit", profit))
-app.add_handler(CommandHandler("resetprofit", reset_profit))
+app.add_handler(MessageHandler(filters.TEXT & filters.Regex("^الارباح$|^كمله الارباح$"), show_profit))
+app.add_handler(MessageHandler(filters.TEXT & filters.Regex("^تصفير$"), reset_all))
+app.add_handler(MessageHandler(filters.TEXT & filters.Regex("^التقارير$"), show_report))
 
 conv_handler = ConversationHandler(
     entry_points=[
