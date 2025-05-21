@@ -30,13 +30,13 @@ def get_invoice_number():
 invoice_numbers = {}
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("أرسل عنوان الطلب في السطر الأول، ثم المنتجات كل واحدة في سطر.")
+    await update.message.reply_text("دز رساله بيها عنوان الزبون بالسطر الاول وبنفس الرساله المنتجات الي يريدها الزبون واحد جوا الثاني .")
 
 async def receive_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
     lines = update.message.text.strip().split('\n')
     if len(lines) < 2:
-        await update.message.reply_text("أرسل العنوان في السطر الأول، وكل منتج في سطر جديد.")
+        await update.message.reply_text("دز رساله بيها عنوان الزبون بالسطر الاول وبنفس الرساله المنتجات الي يريدها الزبون واحد جوا الثاني .")
         return
 
     title = lines[0]
@@ -52,7 +52,7 @@ async def receive_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
     pricing[order_id] = {}
     invoice_numbers[order_id] = invoice_no
 
-    await update.message.reply_text(f"تم استلام الطلب بعنوان: {title}\nعدد المنتجات: {len(products)}")
+    await update.message.reply_text(f"استلمت طلبية: {title}\nعدد المنتجات: {len(products)}")
     await show_buttons(update.effective_chat.id, context, user_id, order_id)
 
 async def show_buttons(chat_id, context, user_id, order_id):
@@ -73,7 +73,7 @@ async def show_buttons(chat_id, context, user_id, order_id):
 
     msg = await context.bot.send_message(
         chat_id=chat_id,
-        text=f"اضغط على منتج لتحديد السعر من {order['title']}:",
+        text=f"اضغط على منتج لتحديد او تحديث السعر من {order['title']}:",
         reply_markup=markup
     )
 
@@ -96,11 +96,11 @@ async def receive_buy_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         price = float(update.message.text)
     except ValueError:
-        await update.message.reply_text("رجاءً أرسل رقم صحيح لسعر الشراء.")
+        await update.message.reply_text("دكتب عدل بيش اشتريت.")
         return ASK_BUY
 
     pricing[order_id].setdefault(product, {})["buy"] = price
-    await update.message.reply_text(f"بيش راح تبيع '{product}'؟")
+    await update.message.reply_text(f"بيش ح نبيع '{product}'؟")
     return ASK_SELL
 
 async def receive_sell_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -111,7 +111,7 @@ async def receive_sell_price(update: Update, context: ContextTypes.DEFAULT_TYPE)
     try:
         price = float(update.message.text)
     except ValueError:
-        await update.message.reply_text("رجاءً أرسل رقم صحيح لسعر البيع.")
+        await update.message.reply_text("دكتب عدل بيش  حنبيع.")
         return ASK_SELL
 
     pricing[order_id][product]["sell"] = price
@@ -153,7 +153,7 @@ async def receive_sell_price(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
         encoded = customer_text.replace(" ", "%20").replace("\n", "%0A")
         wa_link = f"https://wa.me/?text={encoded}"
-        await update.message.reply_text("رابط إرسال الفاتورة بالواتساب:\n" + wa_link)
+        await update.message.reply_text("دوس الرابط حتى تروح لابو الاكبر:\n" + wa_link)
 
     return ConversationHandler.END
 
