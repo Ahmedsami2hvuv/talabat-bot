@@ -10,7 +10,7 @@ pricing = {}
 current_product = {}
 
 ASK_BUY, ASK_SELL = range(2)
-TOKEN = "7508502359:AAFpTd7qBnpTDkLH5GI7i8q8EZBR211DY9g"
+TOKEN = "7508502359:AAFtlXVMJGUiWaeqJZc0o03Yy-SgVYE_xz8"
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("أرسل عنوان الطلب في السطر الأول، ثم المنتجات كل واحدة في سطر.")
