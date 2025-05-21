@@ -8,7 +8,7 @@ import uuid
 orders = {}
 pricing = {}
 current_product = {}
-last_button_message = {}  # order_id -> message_id
+last_button_message = {}
 
 ASK_BUY, ASK_SELL = range(2)
 TOKEN = "7508502359:AAFtlXVMJGUiWaeqJZc0o03Yy-SgVYE_xz8"
@@ -47,7 +47,6 @@ async def show_buttons(chat_id, context, user_id, order_id):
 
     markup = InlineKeyboardMarkup(buttons)
 
-    # حذف الرسالة السابقة إن وُجدت
     if order_id in last_button_message:
         try:
             await context.bot.delete_message(chat_id=chat_id, message_id=last_button_message[order_id])
@@ -99,12 +98,11 @@ async def receive_sell_price(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     pricing[order_id][product]["sell"] = price
     await update.message.reply_text(f"تم حفظ السعر لـ '{product}'.")
-
     await show_buttons(update.effective_chat.id, context, user_id, order_id)
 
     order = orders[order_id]
     if all(p in pricing[order_id] and 'buy' in pricing[order_id][p] and 'sell' in pricing[order_id][p] for p in order["products"]):
-        summary = [f"عنوان الزبون: {order['title']}"]
+        summary = [f"رقم الفاتورة: {order_id}", f"عنوان الزبون: {order['title']}"]
         total_buy = total_sell = 0
         for p in order["products"]:
             buy = pricing[order_id][p]["buy"]
@@ -125,7 +123,12 @@ async def receive_sell_price(update: Update, context: ContextTypes.DEFAULT_TYPE)
             running_total += sell
             customer_lines.append(f"{p} - {sell} = {running_total}")
 
-        customer_text = f"أبو الأكبر للتوصيل\nعنوان الزبون: {order['title']}\n\nالمواد:\n" + "\n".join(customer_lines)
+        customer_text = (
+            f"أبو الأكبر للتوصيل\n"
+            f"رقم الفاتورة: {order_id}\n"
+            f"عنوان الزبون: {order['title']}\n\n"
+            f"المواد:\n" + "\n".join(customer_lines)
+        )
         customer_text += f"\n\nمجموع القائمة الكلي: {running_total} (بدون كلفة التوصيل)"
         await update.message.reply_text("نسخة الزبون:\n" + customer_text)
 
