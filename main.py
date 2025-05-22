@@ -33,14 +33,6 @@ def get_invoice_number():
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(" دز الطلبيه كلها برساله واحده عنوان الزبون يكون بالسطر الاول وباقي المنتجات تكون كل منتج بسطر جوا الثاني.")
 
-async def receive_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await process_order(update, context, update.message)
-
-async def edited_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not update.edited_message:
-        return
-    await process_order(update, context, update.edited_message, edited=True)
-
 async def process_order(update, context, message, edited=False):
     user_id = message.from_user.id
     lines = message.text.strip().split('\n')
@@ -64,14 +56,25 @@ async def process_order(update, context, message, edited=False):
 
     if existing_order_id:
         order_id = existing_order_id
-        old_products = set(orders[order_id]["products"])
-        new_products = set(products)
-        added = list(new_products - old_products)
+        old_products = orders[order_id]["products"]
+        old_pricing = pricing[order_id]
+
+        new_set = set(products)
+        old_set = set(old_products)
+        added_products = list(new_set - old_set)
+
         orders[order_id]["title"] = title
-        orders[order_id]["products"] += [p for p in added if p not in orders[order_id]["products"]]
+        orders[order_id]["products"] += [p for p in added_products if p not in old_products]
+
+        # نحافظ على الأسعار القديمة، وما نمسح شي
+        for p in added_products:
+            if p not in old_pricing:
+                pricing[order_id][p] = {}  # فقط نضيف المنتجات الجديدة بدون التأثير عالبقية
+
         await show_buttons(message.chat_id, context, user_id, order_id)
         return
 
+    # طلب جديد
     order_id = str(uuid.uuid4())[:8]
     invoice_no = get_invoice_number()
     orders[order_id] = {"user_id": user_id, "title": title, "products": products}
