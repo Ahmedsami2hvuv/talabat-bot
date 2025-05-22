@@ -13,6 +13,7 @@ current_product = {}
 last_button_message = {}
 invoice_numbers = {}
 daily_profit = 0.0
+OWNER_ID = 7032076289
 
 ASK_BUY, ASK_SELL = range(2)
 TOKEN = "7508502359:AAFtlXVMJGUiWaeqJZc0o03Yy-SgVYE_xz8"
@@ -163,11 +164,19 @@ async def receive_sell_price(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     return ConversationHandler.END
 
+# فحص الصلاحية
+def is_owner(update: Update) -> bool:
+    return update.effective_user.id == OWNER_ID or update.effective_chat.type != "private"
+
 # أوامر خاصة
 async def show_profit(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_owner(update):
+        return
     await update.message.reply_text(f"الربح التراكمي: {daily_profit} دينار")
 
 async def reset_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_owner(update):
+        return
     global daily_profit, orders, pricing, invoice_numbers, last_button_message
     daily_profit = 0.0
     orders.clear()
@@ -177,6 +186,8 @@ async def reset_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("تم تصفير الأرباح ومسح كل الطلبات.")
 
 async def show_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_owner(update):
+        return
     total_orders = len(orders)
     total_products = sum(len(o["products"]) for o in orders.values())
     total_buy = total_sell = 0
