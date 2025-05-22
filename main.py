@@ -1,4 +1,4 @@
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, Message
 from telegram.ext import (
     ApplicationBuilder, ContextTypes, CommandHandler,
     MessageHandler, CallbackQueryHandler, ConversationHandler, filters
@@ -13,12 +13,12 @@ current_product = {}
 last_button_message = {}
 invoice_numbers = {}
 daily_profit = 0.0
-OWNER_ID = 7032076289
+message_order_map = {}
 
+OWNER_ID = 7032076289
 ASK_BUY, ASK_SELL = range(2)
 TOKEN = "7508502359:AAFtlXVMJGUiWaeqJZc0o03Yy-SgVYE_xz8"
 
-# رقم الفاتورة التسلسلي
 counter_file = "invoice_counter.txt"
 if not os.path.exists(counter_file):
     with open(counter_file, "w") as f:
@@ -36,6 +36,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def receive_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
+    message_id = update.message.message_id
     lines = update.message.text.strip().split('\n')
     if len(lines) < 2:
         await update.message.reply_text("أرسل عنوان الزبون بالسطر الأول، ثم المنتجات سطر سطر.")
@@ -49,24 +50,45 @@ async def receive_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
     orders[order_id] = {
         "user_id": user_id,
         "title": title,
-        "products": products
+        "products": products,
+        "msg_id": message_id,
+        "chat_id": update.effective_chat.id
     }
     pricing[order_id] = {}
     invoice_numbers[order_id] = invoice_no
+    message_order_map[message_id] = order_id
 
     await update.message.reply_text(f"استلمت الطلب: {title} ({len(products)} منتج)")
     await show_buttons(update.effective_chat.id, context, user_id, order_id)
+
+async def handle_edited(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    msg = update.edited_message
+    msg_id = msg.message_id
+    if msg_id not in message_order_map:
+        return
+    order_id = message_order_map[msg_id]
+    lines = msg.text.strip().split('\n')
+    if len(lines) < 2:
+        return
+    title = lines[0]
+    products = lines[1:]
+
+    orders[order_id]["title"] = title
+    for p in products:
+        if p not in orders[order_id]["products"]:
+            orders[order_id]["products"].append(p)
+
+    await show_buttons(msg.chat_id, context, orders[order_id]["user_id"], order_id)
 
 async def show_buttons(chat_id, context, user_id, order_id):
     order = orders[order_id]
     buttons = []
     for p in order["products"]:
-        is_done = p in pricing[order_id] and 'buy' in pricing[order_id][p] and 'sell' in pricing[order_id][p]
+        is_done = p in pricing[order_id] and "buy" in pricing[order_id][p] and "sell" in pricing[order_id][p]
         label = f"✅ {p}" if is_done else p
         buttons.append([InlineKeyboardButton(label, callback_data=f"{order_id}|{p}")])
 
     markup = InlineKeyboardMarkup(buttons)
-
     if order_id in last_button_message:
         try:
             await context.bot.delete_message(chat_id=chat_id, message_id=last_button_message[order_id])
@@ -96,36 +118,32 @@ async def receive_buy_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
     order_id, product = data["order_id"], data["product"]
     try:
         price = float(update.message.text)
-    except ValueError:
+    except:
         await update.message.reply_text("اكتب سعر الشراء بشكل صحيح.")
         return ASK_BUY
-
     pricing[order_id].setdefault(product, {})["buy"] = price
     await update.message.reply_text(f"بيش راح تبيع '{product}'؟")
     return ASK_SELL
 
 async def receive_sell_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global daily_profit
-
     user_id = update.message.from_user.id
     data = current_product.get(user_id)
     if not data: return
     order_id, product = data["order_id"], data["product"]
-
     try:
         price = float(update.message.text)
-    except ValueError:
+    except:
         await update.message.reply_text("اكتب سعر البيع بشكل صحيح.")
         return ASK_SELL
 
     pricing[order_id][product]["sell"] = price
     await update.message.reply_text(f"تم حفظ السعر لـ '{product}'.")
-
     await show_buttons(update.effective_chat.id, context, user_id, order_id)
 
     order = orders[order_id]
-    invoice = invoice_numbers.get(order_id, "غير معروف")
-    if all(p in pricing[order_id] and 'buy' in pricing[order_id][p] and 'sell' in pricing[order_id][p] for p in order["products"]):
+    invoice = invoice_numbers.get(order_id, "??")
+    if all(p in pricing[order_id] and "buy" in pricing[order_id][p] and "sell" in pricing[order_id][p] for p in order["products"]):
         summary = [f"رقم الفاتورة: {invoice}", f"عنوان الزبون: {order['title']}"]
         total_buy = total_sell = 0
         for p in order["products"]:
@@ -137,91 +155,7 @@ async def receive_sell_price(update: Update, context: ContextTypes.DEFAULT_TYPE)
             summary.append(f"{p} - شراء: {buy}, بيع: {sell}, ربح: {profit}")
         net_profit = total_sell - total_buy
         daily_profit += net_profit
-
-        result = "\n".join(summary)
-        result += f"\n\nالمجموع شراء: {total_buy}\nالمجموع بيع: {total_sell}\nالربح الكلي: {net_profit}"
-        await update.message.reply_text(result)
-
-        customer_lines = []
-        running_total = 0
-        for p in order["products"]:
-            sell = pricing[order_id][p]["sell"]
-            running_total += sell
-            customer_lines.append(f"{p} - {sell} = {running_total}")
-
-        customer_text = (
-            f"أبو الأكبر للتوصيل\n"
-            f"رقم الفاتورة: {invoice}\n"
-            f"عنوان الزبون: {order['title']}\n\n"
-            f"المواد:\n" + "\n".join(customer_lines)
-        )
-        customer_text += f"\n\nمجموع القائمة الكلي: {running_total} (بدون كلفة التوصيل)"
-        await update.message.reply_text("نسخة الزبون:\n" + customer_text)
-
-        encoded = customer_text.replace(" ", "%20").replace("\n", "%0A")
-        wa_link = f"https://wa.me/?text={encoded}"
-        await update.message.reply_text("دوس الرابط حتى تروح لابو الاكبر:\n" + wa_link)
-
-    return ConversationHandler.END
-
-# فحص الصلاحية
-def is_owner(update: Update) -> bool:
-    return update.effective_user.id == OWNER_ID or update.effective_chat.type != "private"
-
-# أوامر خاصة
-async def show_profit(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_owner(update):
-        return
-    await update.message.reply_text(f"الربح التراكمي: {daily_profit} دينار")
-
-async def reset_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_owner(update):
-        return
-    global daily_profit, orders, pricing, invoice_numbers, last_button_message
-    daily_profit = 0.0
-    orders.clear()
-    pricing.clear()
-    invoice_numbers.clear()
-    last_button_message.clear()
-    await update.message.reply_text("تم تصفير الأرباح ومسح كل الطلبات.")
-
-async def show_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_owner(update):
-        return
-    total_orders = len(orders)
-    total_products = sum(len(o["products"]) for o in orders.values())
-    total_buy = total_sell = 0
-    product_counter = Counter()
-
-    details = []
-    for order_id, order in orders.items():
-        invoice = invoice_numbers.get(order_id, "غير معروف")
-        details.append(f"\nفاتورة: {invoice}\nعنوان: {order['title']}")
-        for p in order["products"]:
-            product_counter[p] += 1
-            if p in pricing[order_id]:
-                buy = pricing[order_id][p].get("buy", 0)
-                sell = pricing[order_id][p].get("sell", 0)
-                profit = sell - buy
-                total_buy += buy
-                total_sell += sell
-                details.append(f"{p} - شراء: {buy}, بيع: {sell}, ربح: {profit}")
-
-    top_product = product_counter.most_common(1)[0][0] if product_counter else "لا يوجد"
-
-    result = "\n".join(details)
-    result += f"\n\nإجمالي الطلبات: {total_orders}"
-    result += f"\nإجمالي المنتجات: {total_products}"
-    result += f"\nأكثر منتج تم طلبه: {top_product}"
-    result += f"\n\nمجموع الشراء: {total_buy}\nمجموع البيع: {total_sell}\nمجموع الأرباح: {total_sell - total_buy}"
-    await update.message.reply_text(result)
-
-# إعداد البوت
-app = ApplicationBuilder().token(TOKEN).build()
-app.add_handler(CommandHandler("start", start))
-app.add_handler(MessageHandler(filters.TEXT & filters.Regex("^الارباح$|^ارباح$"), show_profit))
-app.add_handler(MessageHandler(filters.TEXT & filters.Regex("^صفر$|^تصفر$"), reset_all))
-app.add_handler(MessageHandler(filters.TEXT & filters.Regex("^التقارير$|^تقرير$|^تقارير$"), show_report))
+        await update.message.reply_text("\n".join(summary) + f"\n\nالمجموع شراء: {total_buy}\nالمجموع بيع: {total_sell}\nالربح الكلي: {net_profit}")
 
 conv_handler = ConversationHandler(
     entry_points=[
@@ -234,7 +168,11 @@ conv_handler = ConversationHandler(
     },
     fallbacks=[]
 )
+
+app = ApplicationBuilder().token(TOKEN).build()
+app.add_handler(CommandHandler("start", start))
 app.add_handler(conv_handler)
+app.add_handler(MessageHandler(filters.UpdateType.EDITED_MESSAGE, handle_edited))
 
 print("Bot is running...")
 app.run_polling()
