@@ -31,7 +31,7 @@ def get_invoice_number():
     return current
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("دز عنوان الزبون بالسطر الأول، وبعده المنتجات سطر سطر.")
+    await update.message.reply_text(" دز الطلبيه كلها برساله واحده عنوان الزبون يكون بالسطر الاول وباقي المنتجات تكون كل منتج بسطر جوا الثاني.")
 
 async def receive_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await process_order(update, context, update.message)
@@ -113,7 +113,7 @@ async def receive_buy_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         price = float(update.message.text)
     except:
-        await update.message.reply_text("اكتب سعر الشراء بشكل صحيح.")
+        await update.message.reply_text("دكتب عدل بيش اشتريت.")
         return ASK_BUY
     pricing[order_id].setdefault(product, {})["buy"] = price
     await update.message.reply_text(f"بيش راح تبيع '{product}'؟")
@@ -128,7 +128,7 @@ async def receive_sell_price(update: Update, context: ContextTypes.DEFAULT_TYPE)
     try:
         price = float(update.message.text)
     except:
-        await update.message.reply_text("اكتب سعر البيع بشكل صحيح.")
+        await update.message.reply_text("دكتب عدل بيش حتبيع.")
         return ASK_SELL
     pricing[order_id][product]["sell"] = price
     await update.message.reply_text(f"تم حفظ السعر لـ '{product}'.")
@@ -209,7 +209,7 @@ async def show_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
 app = ApplicationBuilder().token(TOKEN).build()
 app.add_handler(CommandHandler("start", start))
 app.add_handler(MessageHandler(filters.TEXT & filters.Regex("^الارباح$|^ارباح$"), show_profit))
-app.add_handler(MessageHandler(filters.TEXT & filters.Regex("^صفر$|^تصفر$"), reset_all))
+app.add_handler(MessageHandler(filters.TEXT & filters.Regex("^صفر$|^تصفير$"), reset_all))
 app.add_handler(MessageHandler(filters.TEXT & filters.Regex("^التقارير$|^تقرير$|^تقارير$"), show_report))
 app.add_handler(MessageHandler(filters.UpdateType.EDITED_MESSAGE, edited_message))
 
