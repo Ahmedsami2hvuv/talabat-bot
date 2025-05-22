@@ -66,22 +66,20 @@ async def process_order(update, context, message, edited=False):
         orders[order_id]["title"] = title
         orders[order_id]["products"] += [p for p in added_products if p not in old_products]
 
-        # نحافظ على الأسعار القديمة، وما نمسح شي
         for p in added_products:
             if p not in old_pricing:
-                pricing[order_id][p] = {}  # فقط نضيف المنتجات الجديدة بدون التأثير عالبقية
+                pricing[order_id][p] = {}
 
-        await show_buttons(message.chat_id, context, user_id, order_id)
+        await show_buttons(message.chat.id, context, user_id, order_id)
         return
 
-    # طلب جديد
     order_id = str(uuid.uuid4())[:8]
     invoice_no = get_invoice_number()
     orders[order_id] = {"user_id": user_id, "title": title, "products": products}
     pricing[order_id] = {}
     invoice_numbers[order_id] = invoice_no
     await message.reply_text(f"استلمت الطلب: {title} ({len(products)} منتج)")
-    await show_buttons(message.chat_id, context, user_id, order_id)
+    await show_buttons(message.chat.id, context, user_id, order_id)
 
 async def show_buttons(chat_id, context, user_id, order_id):
     order = orders[order_id]
