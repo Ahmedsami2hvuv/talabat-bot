@@ -21,7 +21,7 @@ COUNTER_FILE = os.path.join(DATA_DIR, "invoice_counter.txt")
 
 # تحميل البيانات عند بدء تشغيل البوت
 def load_data():
-    global orders, pricing, invoice_numbers, daily_profit, last_button_message
+    global orders, pricing, invoice_numbers, daily_profit, last_button_message, current_product # أضف current_product هنا
 
     # تهيئة المتغيرات
     orders = {}
@@ -29,6 +29,7 @@ def load_data():
     invoice_numbers = {}
     daily_profit = 0.0
     last_button_message = {} # هذا ما راح ينحفظ، لأنه يتعلق بحالة الرسائل في الوقت الحالي
+    current_product = {} # تم تهيئته هنا لضمان وجوده دائماً
 
     # تأكد من وجود مجلد البيانات قبل محاولة القراءة أو الكتابة
     os.makedirs(DATA_DIR, exist_ok=True)
@@ -256,15 +257,15 @@ async def product_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     print(f"DEBUG: Callback query received: {query.data}") # رسالة للـ Logs
     await query.answer() # يجب الإجابة على الكولباك كويري
 
-    try:
-        # تم إرجاع طريقة تقسيم الـ callback_data إلى الشكل الأبسط
-        order_id, product = query.data.split("|", 1) 
-    except ValueError as e: # تغير نوع الخطأ إلى ValueError إذا لم يكن هناك '|'
-        print(f"ERROR: Failed to parse callback_data: {query.data}. Error: {e}")
-        await query.message.reply_text("عذراً، حدث خطأ في معالجة بيانات الزر. الرجاء المحاولة مرة أخرى.")
-        return ConversationHandler.END
-    
     user_id = str(query.from_user.id) # تحويل الـ ID إلى string
+    
+    # محاولة فك الـ callback_data
+    try:
+        order_id, product = query.data.split("|", 1) 
+    except ValueError as e: # إذا لم يكن هناك '|' في الـ callback_data
+        print(f"ERROR: Failed to parse callback_data for product selection: {query.data}. Error: {e}")
+        await query.message.reply_text("عذراً، حدث خطأ في بيانات الزر. الرجاء بدء طلبية جديدة.")
+        return ConversationHandler.END
 
     # التحقق من أن الطلب والمنتج لا يزالان موجودين
     # تأكد من أن order_id موجود في orders قبل الوصول إلى [order_id]
@@ -277,6 +278,7 @@ async def product_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.message.reply_text("عذراً، الطلب أو المنتج غير موجود. الرجاء بدء طلبية جديدة أو التحقق من المنتجات.")
         return ConversationHandler.END
     
+    # تهيئة current_product للمستخدم الحالي
     current_product[user_id] = {"order_id": order_id, "product": product}
     await query.message.reply_text(f"تمام، كم سعر شراء *'{product}'*؟", parse_mode="Markdown")
     return ASK_BUY
@@ -628,7 +630,7 @@ def main():
             # تم تعديل pattern هنا ليلتقط الـ callback_data الخاصة بأزرار المنتجات
             # بما أننا أرجعنا الـ callback_data إلى الشكل البسيط "order_id|product"
             # يجب أن يكون الـ pattern عاماً ليلتقط أي callback_query تبدأ بها المحادثة
-            CallbackQueryHandler(product_selected, pattern=r"^[0-9a-fA-F]{8}\|.*") # يلتقط الـ order_id (8 أحرف/أرقام) ثم | ثم أي شيء
+            CallbackQueryHandler(product_selected) # Removed pattern for generic catch and internal validation
         ],
         states={
             ASK_BUY: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_buy_price)],
