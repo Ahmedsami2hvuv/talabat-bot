@@ -264,32 +264,30 @@ async def show_buttons(chat_id, context, user_id, order_id, is_final_buttons=Fal
     
     markup = InlineKeyboardMarkup(buttons_list)
     
-    # **** التعديل هنا: إرسال الرسالة الجديدة أولاً
+    msg_info = last_button_message.get(order_id)
+    if msg_info and msg_info.get("chat_id") == chat_id:
+        try:
+            # حذف الرسالة القديمة أولاً
+            await context.bot.delete_message(chat_id=chat_id, message_id=msg_info["message_id"])
+            logger.info(f"Deleted old button message {msg_info['message_id']} for order {order_id}")
+        except Exception as e:
+            logger.warning(f"Could not delete old button message {msg_info.get('message_id', 'N/A')} for order {order_id}: {e}. Proceeding to send new message.")
+            pass
+        finally:
+            if order_id in last_button_message:
+                del last_button_message[order_id]
+                save_data()
+    
+    # ثم إرسال الرسالة الجديدة
     msg = await context.bot.send_message(
         chat_id=chat_id,
         text=f"اضغط على منتج لتحديد سعره من *{order['title']}*:",
         reply_markup=markup,
         parse_mode="Markdown"
     )
-    logger.info(f"Sent new button message {msg.message_id} for order {order_id}")
-
-    msg_info = last_button_message.get(order_id)
-    if msg_info and msg_info.get("chat_id") == chat_id:
-        try:
-            # **** ثم حذف الرسالة القديمة
-            await context.bot.delete_message(chat_id=chat_id, message_id=msg_info["message_id"])
-            logger.info(f"Deleted old button message {msg_info['message_id']} for order {order_id}")
-        except Exception as e:
-            logger.warning(f"Could not delete old button message {msg_info.get('message_id', 'N/A')} for order {order_id}: {e}. It might have been deleted already or is inaccessible.")
-            pass # تجاهل الخطأ إذا الرسالة لم تعد موجودة أو لا يمكن حذفها
-        finally:
-            # إزالة الإشارة للرسالة القديمة من الذاكرة والملف
-            if order_id in last_button_message:
-                del last_button_message[order_id]
-                save_data() # حفظ التغيير لضمان عدم الرجوع للرسالة المحذوفة بعد إعادة تشغيل البوت
-    
     last_button_message[order_id] = {"chat_id": chat_id, "message_id": msg.message_id}
-    save_data() # حفظ الـ ID والـ chat_id للرسالة الجديدة
+    save_data()
+    logger.info(f"Sent new button message {msg.message_id} for order {order_id}")
 
 
 async def product_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -311,8 +309,15 @@ async def product_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.message.reply_text("عذراً، الطلب أو المنتج غير موجود. الرجاء بدء طلبية جديدة أو التحقق من المنتجات.")
         return ConversationHandler.END
     
+    # تخزين message_id للرسالة التي تحتوي على أزرار المنتجات (لتعديلها/حذفها لاحقاً)
+    # لا حاجة هنا لحذفها فوراً، لأنها تمثل واجهة التفاعل المستمرة
+    
     current_product[user_id] = {"order_id": order_id, "product": product}
-    await query.message.reply_text(f"تمام، كم سعر شراء *'{product}'*؟", parse_mode="Markdown")
+    sent_prompt = await query.message.reply_text(f"تمام، كم سعر شراء *'{product}'*؟", parse_mode="Markdown")
+    # حفظ رسالة السؤال لكي يمكن حذفها لاحقاً
+    context.user_data['current_prompt_message_id'] = sent_prompt.message_id
+    context.user_data['current_prompt_chat_id'] = sent_prompt.chat_id
+
     return ASK_BUY
 
 async def receive_buy_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -337,10 +342,28 @@ async def receive_buy_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("الرجاء إدخال رقم صحيح لسعر الشراء. بيش اشتريت؟")
         return ASK_BUY
     
+    # حذف رسالة السؤال السابقة (كم سعر شراء؟)
+    if 'current_prompt_message_id' in context.user_data and 'current_prompt_chat_id' in context.user_data:
+        try:
+            await context.bot.delete_message(
+                chat_id=context.user_data['current_prompt_chat_id'],
+                message_id=context.user_data['current_prompt_message_id']
+            )
+            logger.info(f"Deleted previous prompt message: {context.user_data['current_prompt_message_id']}")
+        except Exception as e:
+            logger.warning(f"Failed to delete previous prompt message: {e}")
+        finally:
+            del context.user_data['current_prompt_message_id']
+            del context.user_data['current_prompt_chat_id']
+
     pricing.setdefault(order_id, {}).setdefault(product, {})["buy"] = price
     save_data()
 
-    await update.message.reply_text(f"شكراً. وهسه، بيش راح تبيع *'{product}'*؟", parse_mode="Markdown")
+    sent_prompt = await update.message.reply_text(f"شكراً. وهسه، بيش راح تبيع *'{product}'*؟", parse_mode="Markdown")
+    # حفظ رسالة السؤال الجديدة لكي يمكن حذفها لاحقاً
+    context.user_data['current_prompt_message_id'] = sent_prompt.message_id
+    context.user_data['current_prompt_chat_id'] = sent_prompt.chat_id
+
     return ASK_SELL
 
 async def receive_sell_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -365,13 +388,33 @@ async def receive_sell_price(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await update.message.reply_text("الرجاء إدخال رقم صحيح لسعر البيع. بيش حتبيع؟")
         return ASK_SELL
     
+    # حذف رسالة السؤال السابقة (بيش راح تبيع؟)
+    if 'current_prompt_message_id' in context.user_data and 'current_prompt_chat_id' in context.user_data:
+        try:
+            await context.bot.delete_message(
+                chat_id=context.user_data['current_prompt_chat_id'],
+                message_id=context.user_data['current_prompt_message_id']
+            )
+            logger.info(f"Deleted previous prompt message: {context.user_data['current_prompt_message_id']}")
+        except Exception as e:
+            logger.warning(f"Failed to delete previous prompt message: {e}")
+        finally:
+            del context.user_data['current_prompt_message_id']
+            del context.user_data['current_prompt_chat_id']
+
     pricing.setdefault(order_id, {}).setdefault(product, {})["sell"] = price
     save_data()
 
-    await update.message.reply_text(f"تم حفظ السعر لـ *'{product}'*.", parse_mode="Markdown")
+    # الرسالة "تم حفظ السعر..." ستظهر للحظة ثم تختفي إذا لم تكن هي رسالة المطالبة التالية.
+    # في حالة all_priced، سنمسحها مباشرة. في حالة not all_priced، show_buttons ستعيد تحديث الأزرار.
+    sent_confirmation = await update.message.reply_text(f"تم حفظ السعر لـ *'{product}'*.", parse_mode="Markdown")
     
     if order_id not in orders:
         await update.message.reply_text("عذراً، الطلب لم يعد موجوداً بعد حفظ السعر. الرجاء بدء طلبية جديدة.")
+        # نضمن حذف الرسالة المؤقتة قبل الخروج
+        try:
+            await context.bot.delete_message(chat_id=sent_confirmation.chat_id, message_id=sent_confirmation.message_id)
+        except Exception: pass
         return ConversationHandler.END
 
     order = orders[order_id]
@@ -392,9 +435,25 @@ async def receive_sell_price(update: Update, context: ContextTypes.DEFAULT_TYPE)
         keyboard = [buttons[i:i + 5] for i in range(0, len(buttons), 5)]
         reply_markup = InlineKeyboardMarkup(keyboard)
 
-        await update.message.reply_text("كل المنتجات تم تسعيرها. كم محل كلفتك الطلبية؟ (اختر من الأزرار أو اكتب الرقم)", reply_markup=reply_markup)
+        # حذف رسالة "تم حفظ السعر" قبل إرسال أزرار المحلات
+        try:
+            await context.bot.delete_message(chat_id=sent_confirmation.chat_id, message_id=sent_confirmation.message_id)
+        except Exception as e:
+            logger.warning(f"Failed to delete confirmation message before places buttons: {e}")
+
+        sent_places_prompt = await update.message.reply_text("كل المنتجات تم تسعيرها. كم محل كلفتك الطلبية؟ (اختر من الأزرار أو اكتب الرقم)", reply_markup=reply_markup)
+        # حفظ رسالة السؤال الجديدة لكي يمكن حذفها لاحقاً
+        context.user_data['current_prompt_message_id'] = sent_places_prompt.message_id
+        context.user_data['current_prompt_chat_id'] = sent_places_prompt.chat_id
+
         return ASK_PLACES
     else:
+        # حذف رسالة "تم حفظ السعر" قبل تحديث أزرار المنتجات
+        try:
+            await context.bot.delete_message(chat_id=sent_confirmation.chat_id, message_id=sent_confirmation.message_id)
+        except Exception as e:
+            logger.warning(f"Failed to delete confirmation message before updating product buttons: {e}")
+
         await show_buttons(update.effective_chat.id, context, user_id, order_id)
         return ASK_BUY
 
@@ -422,6 +481,7 @@ async def receive_place_count(update: Update, context: ContextTypes.DEFAULT_TYPE
         if query.data.startswith("places_"):
             places = int(query.data.split("_")[1])
             message_to_send_from = query.message
+            # إزالة أزرار المحلات بعد الاختيار
             try:
                 await context.bot.edit_message_reply_markup(
                     chat_id=query.message.chat_id,
@@ -491,11 +551,42 @@ async def receive_place_count(update: Update, context: ContextTypes.DEFAULT_TYPE
     
     final_owner_invoice_text = "\n".join(invoice_text_for_owner)
 
-    await message_to_send_from.reply_text(
-        f"**الفاتورة النهائية (لك):**\n{final_owner_invoice_text}",
-        parse_mode="Markdown"
-    )
+    # **** حذف رسالة "كم محل كلفك الطلبية؟"
+    if 'current_prompt_message_id' in context.user_data and 'current_prompt_chat_id' in context.user_data:
+        try:
+            await context.bot.delete_message(
+                chat_id=context.user_data['current_prompt_chat_id'],
+                message_id=context.user_data['current_prompt_message_id']
+            )
+            logger.info(f"Deleted places prompt message: {context.user_data['current_prompt_message_id']}")
+        except Exception as e:
+            logger.warning(f"Failed to delete places prompt message: {e}")
+        finally:
+            del context.user_data['current_prompt_message_id']
+            del context.user_data['current_prompt_chat_id']
 
+
+    # **** إرسال فاتورة الإدارة (بكل تفاصيلها) إلى المالك في الدردشة الخاصة
+    try:
+        await context.bot.send_message(
+            chat_id=OWNER_ID,
+            text=f"**الفاتورة النهائية (لك):**\n{final_owner_invoice_text}",
+            parse_mode="Markdown"
+        )
+        encoded_owner_invoice = final_owner_invoice_text.replace(" ", "%20").replace("\n", "%0A").replace("*", "")
+        owner_wa_markup = InlineKeyboardMarkup([[InlineKeyboardButton("إرسال فاتورة الإدارة للواتساب", url=f"https://wa.me/{OWNER_PHONE_NUMBER}?text={encoded_owner_invoice}")]])
+        await context.bot.send_message(
+            chat_id=OWNER_ID,
+            text="رابط واتساب فاتورة الإدارة:",
+            reply_markup=owner_wa_markup
+        )
+        logger.info(f"Admin invoice and WA link sent privately to owner {OWNER_ID} for order {order_id}")
+    except Exception as e:
+        logger.error(f"Failed to send private admin invoice to owner {OWNER_ID}: {e}")
+        await message_to_send_from.reply_text("عذراً، لم أستطع إرسال فاتورة الإدارة إلى الدردشة الخاصة بالمالك.", parse_mode="Markdown")
+
+
+    # بناء نسخة الزبون (لأبي الأكبر) - ستظهر في الكروب
     running_total = 0.0
     customer_lines = []
     for p in order["products"]:
@@ -518,14 +609,11 @@ async def receive_place_count(update: Update, context: ContextTypes.DEFAULT_TYPE
     
     await message_to_send_from.reply_text("نسخة الزبون (لإرسالها للعميل):\n" + customer_text, parse_mode="Markdown")
 
-    encoded_owner_invoice = final_owner_invoice_text.replace(" ", "%20").replace("\n", "%0A").replace("*", "")
+    # إرسال زر فاتورة الزبون للواتساب في الكروب
     encoded_customer_invoice = customer_text.replace(" ", "%20").replace("\n", "%0A").replace("*", "")
-
-    whatsapp_buttons_markup = InlineKeyboardMarkup([
-        [InlineKeyboardButton("إرسال فاتورة الإدارة للواتساب", url=f"https://wa.me/{OWNER_PHONE_NUMBER}?text={encoded_owner_invoice}")],
-        [InlineKeyboardButton("إرسال فاتورة الزبون للواتساب", url=f"https://wa.me/{OWNER_PHONE_NUMBER}?text={encoded_customer_invoice}")]
-    ])
-    await message_to_send_from.reply_text("دوس على هذه الأزرار لإرسال الفواتير عبر الواتساب:", reply_markup=whatsapp_buttons_markup)
+    customer_wa_markup = InlineKeyboardMarkup([[InlineKeyboardButton("إرسال فاتورة الزبون للواتساب", url=f"https://wa.me/{OWNER_PHONE_NUMBER}?text={encoded_customer_invoice}")]])
+    await message_to_send_from.reply_text("دوس على هذا الزر لإرسال فاتورة الزبون عبر الواتساب:", reply_markup=customer_wa_markup)
+    logger.info(f"Customer invoice and WA link sent to chat {message_to_send_from.chat_id} for order {order_id}")
     
     final_actions_keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("تعديل الطلب الأخير", callback_data=f"edit_last_order_{order_id}")],
@@ -613,8 +701,8 @@ async def show_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     total_orders = len(orders)
     total_products = 0
-    total_buy_all_orders = 0.0 # لتجميع الشراء من كل الطلبات
-    total_sell_all_orders = 0.0 # لتجميع البيع من كل الطلبات
+    total_buy_all_orders = 0.0
+    total_sell_all_orders = 0.0
     product_counter = Counter()
     details = []
 
