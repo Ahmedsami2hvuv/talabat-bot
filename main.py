@@ -248,9 +248,9 @@ async def show_buttons(chat_id, context, user_id, order_id):
     # محاولة حذف الرسالة القديمة للأزرار لتجنب الفوضى
     if order_id in last_button_message:
         try:
-            # التحقق إذا كانت الرسالة موجودة وملك لهذا الطلب قبل الحذف
-            if last_button_message[order_id] == context.bot.get_message(chat_id, last_button_message[order_id]).message_id:
-                await context.bot.delete_message(chat_id=chat_id, message_id=last_button_message[order_id])
+            # هنا قد تحتاج لتحسين منطق الحذف إذا كان هناك تحديث سريع
+            # أو إذا كانت الرسائل قديمة جداً
+            await context.bot.delete_message(chat_id=chat_id, message_id=last_button_message[order_id])
         except Exception as e:
             print(f"DEBUG: Could not delete old button message {last_button_message[order_id]} for order {order_id}: {e}")
             pass # تجاهل الخطأ إذا كانت الرسالة غير موجودة أو لم يتم حذفها
@@ -388,8 +388,7 @@ async def receive_sell_price(update: Update, context: ContextTypes.DEFAULT_TYPE)
     else:
         # إذا لم تكتمل جميع المنتجات، نعيد عرض أزرار المنتجات ولا ننهي المحادثة
         await show_buttons(update.effective_chat.id, context, user_id, order_id)
-        return ASK_BUY # هذا هو التصحيح المهم: نرجع لحالة ASK_BUY لكي يبقى الـ ConversationHandler نشطاً
-                       # وينتظر إما نص (لو كان في حالة ASK_BUY) أو كولباك من الأزرار.
+        return ASK_BUY # هذا هو التصحيح الذي يمنع انتهاء المحادثة مبكراً.
 
 def calculate_extra(places):
     extra_fees = {
