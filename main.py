@@ -9,6 +9,7 @@ from collections import Counter
 import json
 
 # المسار الثابت لحفظ البيانات داخل وحدة التخزين (Volume)
+# تأكد أن هذا المسار مطابق للمسار الذي تم تحديده في Railway (غالباً /mnt/data/)
 DATA_DIR = "/mnt/data/"
 
 # أسماء ملفات حفظ البيانات، الآن ستُحفظ داخل مجلد DATA_DIR
@@ -37,6 +38,7 @@ def load_data():
             try:
                 orders = json.load(f)
                 # تحويل مفاتيح orders و pricing و invoice_numbers إلى str إذا كانت integers
+                # لضمان التوافقية مع الـ UUIDs (str)
                 orders = {str(k): v for k, v in orders.items()}
             except json.JSONDecodeError:
                 orders = {}
@@ -167,8 +169,8 @@ async def process_order(update, context, message, edited=False):
     existing_order_id = None
     # البحث عن طلبية موجودة لنفس المستخدم ونفس العنوان
     for oid, order in orders.items():
-        # هنا نتأكد أن user_id المخزن هو str
-        if order.get("user_id") == user_id and order.get("title") == title: # استخدام .get للحماية
+        # هنا نتأكد أن user_id المخزن هو str (مهم إذا كانت البيانات القديمة integer)
+        if str(order.get("user_id")) == user_id and order.get("title") == title: # استخدام .get للحماية
             existing_order_id = oid
             break
 
@@ -176,9 +178,15 @@ async def process_order(update, context, message, edited=False):
     if edited:
         for oid, msg_id in last_button_message.items():
             if msg_id == message.message_id:
-                existing_order_id = oid
+                # التأكد من أن الطلب لا يزال موجوداً قبل استخدامه
+                if oid in orders:
+                    existing_order_id = oid
                 break
-        if existing_order_id and orders[existing_order_id].get("user_id") != user_id: # استخدام .get للحماية
+        # إذا تم العثور على ID في last_button_message ولكن الطلب غير موجود حالياً في orders (بسبب إعادة التشغيل)
+        if existing_order_id and existing_order_id not in orders:
+            existing_order_id = None # نعتبره غير موجود
+            
+        if existing_order_id and str(orders[existing_order_id].get("user_id")) != user_id: # استخدام .get للحماية
             # تجنب تعديل طلبية شخص آخر عن طريق الخطأ
             existing_order_id = None
 
@@ -195,8 +203,8 @@ async def process_order(update, context, message, edited=False):
         
         # تهيئة التسعير للمنتجات المضافة حديثاً
         for p in added_products:
-            if p not in pricing[order_id]:
-                pricing[order_id][p] = {}
+            if p not in pricing.get(order_id, {}): # استخدام .get للحماية
+                pricing.setdefault(order_id, {})[p] = {} # تأكد من تهيئة pricing[order_id]
         
         save_data() # حفظ التغييرات
         await show_buttons(message.chat_id, context, user_id, order_id)
@@ -215,6 +223,12 @@ async def process_order(update, context, message, edited=False):
     await show_buttons(message.chat_id, context, user_id, order_id)
 
 async def show_buttons(chat_id, context, user_id, order_id):
+    # التأكد من أن order_id موجود في orders قبل محاولة الوصول إليه
+    if order_id not in orders:
+        print(f"DEBUG: Attempted to show buttons for non-existent order_id: {order_id}")
+        await context.bot.send_message(chat_id=chat_id, text="عذراً، الطلب الذي تحاول الوصول إليه غير موجود أو تم حذفه. الرجاء بدء طلبية جديدة.")
+        return
+
     order = orders[order_id]
     buttons = []
     for p in order["products"]:
@@ -230,9 +244,9 @@ async def show_buttons(chat_id, context, user_id, order_id):
     if order_id in last_button_message:
         try:
             await context.bot.delete_message(chat_id=chat_id, message_id=last_button_message[order_id])
-        except Exception:
-            # تجاهل الخطأ إذا كانت الرسالة غير موجودة أو لم يتم حذفها
-            pass
+        except Exception as e:
+            print(f"DEBUG: Could not delete old button message {last_button_message[order_id]} for order {order_id}: {e}")
+            pass # تجاهل الخطأ إذا كانت الرسالة غير موجودة أو لم يتم حذفها
 
     msg = await context.bot.send_message(chat_id=chat_id, text=f"اضغط على منتج لتحديد سعره من *{order['title']}*:", reply_markup=markup, parse_mode="Markdown")
     last_button_message[order_id] = msg.message_id
@@ -257,8 +271,11 @@ async def product_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # التحقق من أن الطلب والمنتج لا يزالان موجودين
     # تأكد من أن order_id موجود في orders قبل الوصول إلى [order_id]
     if order_id not in orders or product not in orders[order_id].get("products", []): # استخدام .get للحماية
-        print(f"DEBUG: Order ID '{order_id}' not found in orders. Current orders keys: {list(orders.keys())}") # رسالة للـ Logs
-        print(f"DEBUG: Product '{product}' not found in products of order '{order_id}'. Products in order: {orders[order_id].get('products', [])}") # رسالة للـ Logs
+        print(f"DEBUG: Order ID '{order_id}' not found in orders or Product '{product}' not in products for order '{order_id}'.") # رسالة للـ Logs
+        print(f"DEBUG: Current orders keys: {list(orders.keys())}")
+        if order_id in orders:
+            print(f"DEBUG: Products in order '{order_id}': {orders[order_id].get('products', [])}")
+        
         await query.message.reply_text("عذراً، الطلب أو المنتج غير موجود. الرجاء بدء طلبية جديدة أو التحقق من المنتجات.")
         return ConversationHandler.END
     
@@ -275,6 +292,11 @@ async def receive_buy_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     order_id, product = data["order_id"], data["product"]
     
+    # تأكد أن الطلب والمنتج لا يزالان صالحين بعد أي إعادة تشغيل
+    if order_id not in orders or product not in orders[order_id].get("products", []):
+        await update.message.reply_text("عذراً، الطلب أو المنتج لم يعد موجوداً. الرجاء بدء طلبية جديدة.")
+        return ConversationHandler.END
+
     try:
         price = float(update.message.text.strip())
         if price < 0:
@@ -285,9 +307,7 @@ async def receive_buy_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return ASK_BUY
     
     # تأكد من أن pricing[order_id] موجود قبل setdefault
-    if order_id not in pricing:
-        pricing[order_id] = {}
-    pricing[order_id].setdefault(product, {})["buy"] = price
+    pricing.setdefault(order_id, {}).setdefault(product, {})["buy"] = price
     save_data() # حفظ بعد تحديث سعر الشراء
 
     await update.message.reply_text(f"شكراً. وهسه، بيش راح تبيع *'{product}'*؟", parse_mode="Markdown")
@@ -302,6 +322,11 @@ async def receive_sell_price(update: Update, context: ContextTypes.DEFAULT_TYPE)
     
     order_id, product = data["order_id"], data["product"]
     
+    # تأكد أن الطلب والمنتج لا يزالان صالحين بعد أي إعادة تشغيل
+    if order_id not in orders or product not in orders[order_id].get("products", []):
+        await update.message.reply_text("عذراً، الطلب أو المنتج لم يعد موجوداً. الرجاء بدء طلبية جديدة.")
+        return ConversationHandler.END
+
     try:
         price = float(update.message.text.strip())
         if price < 0:
@@ -312,16 +337,16 @@ async def receive_sell_price(update: Update, context: ContextTypes.DEFAULT_TYPE)
         return ASK_SELL
     
     # تأكد من أن pricing[order_id] و pricing[order_id][product] موجودين
-    if order_id not in pricing:
-        pricing[order_id] = {}
-    if product not in pricing[order_id]:
-        pricing[order_id][product] = {}
-
-    pricing[order_id][product]["sell"] = price
+    pricing.setdefault(order_id, {}).setdefault(product, {})["sell"] = price
     save_data() # حفظ بعد تحديث سعر البيع
 
     await update.message.reply_text(f"تم حفظ السعر لـ *'{product}'*.", parse_mode="Markdown")
     
+    # تأكد من أن الطلب لا يزال موجوداً قبل الوصول إليه
+    if order_id not in orders:
+        await update.message.reply_text("عذراً، الطلب لم يعد موجوداً بعد حفظ السعر. الرجاء بدء طلبية جديدة.")
+        return ConversationHandler.END
+
     order = orders[order_id]
     # التحقق مما إذا كانت جميع المنتجات قد تم تسعيرها
     all_priced = True
@@ -391,8 +416,9 @@ async def receive_place_count(update: Update, context: ContextTypes.DEFAULT_TYPE
         return ASK_PLACES
 
     order_id = context.user_data.get("completed_order_id")
+    # تأكد أن الطلب لا يزال موجوداً قبل الوصول إليه
     if not order_id or order_id not in orders:
-        await message_to_edit.reply_text("عذراً، لا توجد طلبية مكتملة لمعالجتها. الرجاء بدء طلبية جديدة.")
+        await message_to_edit.reply_text("عذراً، لا توجد طلبية مكتملة لمعالجتها أو تم حذفها. الرجاء بدء طلبية جديدة.")
         return ConversationHandler.END
 
     order = orders[order_id]
@@ -467,6 +493,12 @@ async def receive_place_count(update: Update, context: ContextTypes.DEFAULT_TYPE
     wa_link = f"https://wa.me/{OWNER_PHONE_NUMBER}?text={encoded_owner_invoice}"
     await message_to_edit.reply_text("دوس على هذا الرابط حتى ترسل الفاتورة *لي* على الواتساب:\n" + wa_link, parse_mode="Markdown")
     
+    # يمكن حذف الطلبية بعد الانتهاء منها لمنع تراكم البيانات إذا لم تكن بحاجتها في التقارير الدائمة
+    # del orders[order_id]
+    # del pricing[order_id]
+    # del invoice_numbers[order_id]
+    # save_data() # حفظ بعد الحذف
+
     return ConversationHandler.END
 
 async def show_profit(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -535,22 +567,26 @@ async def show_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
         order_buy = 0.0
         order_sell = 0.0
         
-        for p_name in order["products"]:
-            total_products += 1
-            product_counter[p_name] += 1
-            
-            if p_name in pricing.get(order_id, {}) and "buy" in pricing[order_id].get(p_name, {}) and "sell" in pricing[order_id].get(p_name, {}):
-                buy = pricing[order_id][p_name]["buy"]
-                sell = pricing[order_id][p_name]["sell"]
-                profit = sell - buy
-                total_buy += buy
-                total_sell += sell
-                order_buy += buy
-                order_sell += sell
-                details.append(f"  - {p_name} | شراء: {format_float(buy)} | بيع: {format_float(sell)} | ربح: {format_float(profit)}")
-            else:
-                details.append(f"  - {p_name} | (لم يتم تسعيره)")
-        
+        # تأكد من أن 'products' موجودة وقابلة للتكرار
+        if isinstance(order.get("products"), list):
+            for p_name in order["products"]:
+                total_products += 1
+                product_counter[p_name] += 1
+                
+                if p_name in pricing.get(order_id, {}) and "buy" in pricing[order_id].get(p_name, {}) and "sell" in pricing[order_id].get(p_name, {}):
+                    buy = pricing[order_id][p_name]["buy"]
+                    sell = pricing[order_id][p_name]["sell"]
+                    profit = sell - buy
+                    total_buy += buy
+                    total_sell += sell
+                    order_buy += buy
+                    order_sell += sell
+                    details.append(f"  - {p_name} | شراء: {format_float(buy)} | بيع: {format_float(sell)} | ربح: {format_float(profit)}")
+                else:
+                    details.append(f"  - {p_name} | (لم يتم تسعيره)")
+        else:
+            details.append(f"  (لا توجد منتجات محددة لهذا الطلب)")
+
         # ربح الطلبية الواحدة
         details.append(f"  *ربح هذه الطلبية:* {format_float(order_sell - order_buy)}")
 
@@ -610,3 +646,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
