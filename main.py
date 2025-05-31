@@ -8,12 +8,15 @@ import os
 from collections import Counter
 import json
 
-# أسماء ملفات حفظ البيانات
-ORDERS_FILE = "orders.json"
-PRICING_FILE = "pricing.json"
-INVOICE_NUMBERS_FILE = "invoice_numbers.json"
-DAILY_PROFIT_FILE = "daily_profit.json"
-COUNTER_FILE = "invoice_counter.txt"
+# المسار الثابت لحفظ البيانات داخل وحدة التخزين (Volume)
+DATA_DIR = "/mnt/data/"
+
+# أسماء ملفات حفظ البيانات، الآن ستُحفظ داخل مجلد DATA_DIR
+ORDERS_FILE = os.path.join(DATA_DIR, "orders.json")
+PRICING_FILE = os.path.join(DATA_DIR, "pricing.json")
+INVOICE_NUMBERS_FILE = os.path.join(DATA_DIR, "invoice_numbers.json")
+DAILY_PROFIT_FILE = os.path.join(DATA_DIR, "daily_profit.json")
+COUNTER_FILE = os.path.join(DATA_DIR, "invoice_counter.txt")
 
 # تحميل البيانات عند بدء تشغيل البوت
 def load_data():
@@ -26,30 +29,36 @@ def load_data():
     daily_profit = 0.0
     last_button_message = {} # هذا ما راح ينحفظ، لأنه يتعلق بحالة الرسائل في الوقت الحالي
 
+    # تأكد من وجود مجلد البيانات قبل محاولة القراءة أو الكتابة
+    os.makedirs(DATA_DIR, exist_ok=True)
+
     if os.path.exists(ORDERS_FILE):
         with open(ORDERS_FILE, "r") as f:
             try:
                 orders = json.load(f)
                 # تحويل مفاتيح orders و pricing و invoice_numbers إلى str إذا كانت integers
-                # لأن JSON قد يحولها إلى int إذا كانت أرقام
                 orders = {str(k): v for k, v in orders.items()}
-                for oid in orders:
-                    if oid in pricing:
-                        pricing[oid] = {str(pk): pv for pk, pv in pricing[oid].items()}
             except json.JSONDecodeError:
                 orders = {}
                 print("DEBUG: orders.json is corrupted or empty, reinitializing.")
+            except Exception as e:
+                print(f"DEBUG: Error loading orders.json: {e}, reinitializing.")
+                orders = {}
 
     if os.path.exists(PRICING_FILE):
         with open(PRICING_FILE, "r") as f:
             try:
                 pricing = json.load(f)
                 pricing = {str(k): v for k, v in pricing.items()}
-                for oid in pricing:
-                    pricing[oid] = {str(pk): pv for pk, pv in pricing[oid].items()}
+                for oid in pricing: # تأكد من أن مفاتيح المنتجات داخل pricing هي str أيضاً
+                    if isinstance(pricing[oid], dict):
+                        pricing[oid] = {str(pk): pv for pk, pv in pricing[oid].items()}
             except json.JSONDecodeError:
                 pricing = {}
                 print("DEBUG: pricing.json is corrupted or empty, reinitializing.")
+            except Exception as e:
+                print(f"DEBUG: Error loading pricing.json: {e}, reinitializing.")
+                pricing = {}
 
     if os.path.exists(INVOICE_NUMBERS_FILE):
         with open(INVOICE_NUMBERS_FILE, "r") as f:
@@ -59,6 +68,9 @@ def load_data():
             except json.JSONDecodeError:
                 invoice_numbers = {}
                 print("DEBUG: invoice_numbers.json is corrupted or empty, reinitializing.")
+            except Exception as e:
+                print(f"DEBUG: Error loading invoice_numbers.json: {e}, reinitializing.")
+                invoice_numbers = {}
 
     if os.path.exists(DAILY_PROFIT_FILE):
         with open(DAILY_PROFIT_FILE, "r") as f:
@@ -67,9 +79,14 @@ def load_data():
             except json.JSONDecodeError:
                 daily_profit = 0.0
                 print("DEBUG: daily_profit.json is corrupted or empty, reinitializing.")
+            except Exception as e:
+                print(f"DEBUG: Error loading daily_profit.json: {e}, reinitializing.")
+                daily_profit = 0.0
 
 # حفظ البيانات
 def save_data():
+    # تأكد من وجود مجلد البيانات قبل محاولة الكتابة
+    os.makedirs(DATA_DIR, exist_ok=True)
     with open(ORDERS_FILE, "w") as f:
         json.dump(orders, f)
     with open(PRICING_FILE, "w") as f:
@@ -80,6 +97,8 @@ def save_data():
         json.dump(daily_profit, f)
 
 # تهيئة ملف عداد الفواتير
+# تأكد من وجود مجلد البيانات قبل محاولة القراءة أو الكتابة
+os.makedirs(DATA_DIR, exist_ok=True)
 if not os.path.exists(COUNTER_FILE):
     with open(COUNTER_FILE, "w") as f:
         f.write("1")
@@ -149,7 +168,7 @@ async def process_order(update, context, message, edited=False):
     # البحث عن طلبية موجودة لنفس المستخدم ونفس العنوان
     for oid, order in orders.items():
         # هنا نتأكد أن user_id المخزن هو str
-        if order["user_id"] == user_id and order["title"] == title:
+        if order.get("user_id") == user_id and order.get("title") == title: # استخدام .get للحماية
             existing_order_id = oid
             break
 
@@ -159,14 +178,14 @@ async def process_order(update, context, message, edited=False):
             if msg_id == message.message_id:
                 existing_order_id = oid
                 break
-        if existing_order_id and orders[existing_order_id]["user_id"] != user_id:
+        if existing_order_id and orders[existing_order_id].get("user_id") != user_id: # استخدام .get للحماية
             # تجنب تعديل طلبية شخص آخر عن طريق الخطأ
             existing_order_id = None
 
 
     if existing_order_id:
         order_id = existing_order_id
-        old_products = set(orders[order_id]["products"])
+        old_products = set(orders[order_id].get("products", [])) # استخدام .get للحماية
         new_products = set(products)
         added_products = list(new_products - old_products) # المنتجات الجديدة فقط
         
@@ -200,7 +219,7 @@ async def show_buttons(chat_id, context, user_id, order_id):
     buttons = []
     for p in order["products"]:
         # التحقق مما إذا كان المنتج قد تم تسعيره بالكامل
-        is_done = p in pricing[order_id] and 'buy' in pricing[order_id][p] and 'sell' in pricing[order_id][p]
+        is_done = p in pricing.get(order_id, {}) and 'buy' in pricing[order_id].get(p, {}) and 'sell' in pricing[order_id].get(p, {})
         label = f"✅ {p}" if is_done else p
         # هنا تم تعديل الـ callback_data لإضافة "product_select_" في البداية
         buttons.append([InlineKeyboardButton(label, callback_data=f"product_select_{order_id}|{p}")]) 
@@ -238,7 +257,8 @@ async def product_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # التحقق من أن الطلب والمنتج لا يزالان موجودين
     # تأكد من أن order_id موجود في orders قبل الوصول إلى [order_id]
     if order_id not in orders or product not in orders[order_id].get("products", []): # استخدام .get للحماية
-        print(f"DEBUG: Order ID '{order_id}' not found in orders or product '{product}' not in products of '{order_id}'. Current orders keys: {list(orders.keys())}") # رسالة للـ Logs
+        print(f"DEBUG: Order ID '{order_id}' not found in orders. Current orders keys: {list(orders.keys())}") # رسالة للـ Logs
+        print(f"DEBUG: Product '{product}' not found in products of order '{order_id}'. Products in order: {orders[order_id].get('products', [])}") # رسالة للـ Logs
         await query.message.reply_text("عذراً، الطلب أو المنتج غير موجود. الرجاء بدء طلبية جديدة أو التحقق من المنتجات.")
         return ConversationHandler.END
     
@@ -264,6 +284,9 @@ async def receive_buy_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("الرجاء إدخال رقم صحيح لسعر الشراء. بيش اشتريت؟")
         return ASK_BUY
     
+    # تأكد من أن pricing[order_id] موجود قبل setdefault
+    if order_id not in pricing:
+        pricing[order_id] = {}
     pricing[order_id].setdefault(product, {})["buy"] = price
     save_data() # حفظ بعد تحديث سعر الشراء
 
@@ -288,6 +311,12 @@ async def receive_sell_price(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await update.message.reply_text("الرجاء إدخال رقم صحيح لسعر البيع. بيش حتبيع؟")
         return ASK_SELL
     
+    # تأكد من أن pricing[order_id] و pricing[order_id][product] موجودين
+    if order_id not in pricing:
+        pricing[order_id] = {}
+    if product not in pricing[order_id]:
+        pricing[order_id][product] = {}
+
     pricing[order_id][product]["sell"] = price
     save_data() # حفظ بعد تحديث سعر البيع
 
@@ -297,7 +326,7 @@ async def receive_sell_price(update: Update, context: ContextTypes.DEFAULT_TYPE)
     # التحقق مما إذا كانت جميع المنتجات قد تم تسعيرها
     all_priced = True
     for p in order["products"]:
-        if p not in pricing[order_id] or "buy" not in pricing[order_id][p] or "sell" not in pricing[order_id][p]:
+        if p not in pricing.get(order_id, {}) or "buy" not in pricing[order_id].get(p, {}) or "sell" not in pricing[order_id].get(p, {}):
             all_priced = False
             break
             
@@ -378,7 +407,7 @@ async def receive_place_count(update: Update, context: ContextTypes.DEFAULT_TYPE
     ]
 
     for p in order["products"]:
-        if p in pricing[order_id] and "buy" in pricing[order_id][p] and "sell" in pricing[order_id][p]:
+        if p in pricing.get(order_id, {}) and "buy" in pricing[order_id].get(p, {}) and "sell" in pricing[order_id].get(p, {}):
             buy = pricing[order_id][p]["buy"]
             sell = pricing[order_id][p]["sell"]
             profit = sell - buy
@@ -413,7 +442,7 @@ async def receive_place_count(update: Update, context: ContextTypes.DEFAULT_TYPE
     running_total = 0.0
     customer_lines = []
     for p in order["products"]:
-        if p in pricing[order_id] and "sell" in pricing[order_id][p]:
+        if p in pricing.get(order_id, {}) and "sell" in pricing[order_id].get(p, {}):
             sell = pricing[order_id][p]["sell"]
             running_total += sell
             customer_lines.append(f"{p} - {format_float(sell)} = {format_float(running_total)}")
@@ -475,8 +504,11 @@ async def confirm_reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
         invoice_numbers.clear()
         
         # إعادة تعيين عداد الفواتير
-        with open(COUNTER_FILE, "w") as f:
-            f.write("1")
+        try:
+            with open(COUNTER_FILE, "w") as f:
+                f.write("1")
+        except Exception as e:
+            print(f"ERROR: Could not reset invoice counter file: {e}")
 
         save_data() # حفظ البيانات بعد التصفير
         await query.edit_message_text("تم تصفير الأرباح ومسح كل الطلبات بنجاح.")
@@ -507,7 +539,7 @@ async def show_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
             total_products += 1
             product_counter[p_name] += 1
             
-            if p_name in pricing[order_id] and "buy" in pricing[order_id][p_name] and "sell" in pricing[order_id][p_name]:
+            if p_name in pricing.get(order_id, {}) and "buy" in pricing[order_id].get(p_name, {}) and "sell" in pricing[order_id].get(p_name, {}):
                 buy = pricing[order_id][p_name]["buy"]
                 sell = pricing[order_id][p_name]["sell"]
                 profit = sell - buy
