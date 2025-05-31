@@ -28,8 +28,6 @@ COUNTER_FILE = os.path.join(DATA_DIR, "invoice_counter.txt")
 # ملف لحفظ IDs رسائل الأزرار لكي لا يتم حذفها عند إعادة التشغيل
 LAST_BUTTON_MESSAGE_FILE = os.path.join(DATA_DIR, "last_button_message.json")
 
-# ملاحظة: ملف MESSAGES_TO_DELETE_FILE لم يتم إضافته هنا بعد لإزالة ميزة الحذف التلقائي مؤقتاً
-
 # تهيئة المتغيرات العامة في النطاق العلوي لضمان وجودها
 orders = {}
 pricing = {}
@@ -38,58 +36,50 @@ daily_profit = 0.0
 last_button_message = {} 
 current_product = {} 
 
-
 # تحميل البيانات عند بدء تشغيل البوت
 def load_data():
     global orders, pricing, invoice_numbers, daily_profit, last_button_message, current_product
 
     os.makedirs(DATA_DIR, exist_ok=True)
 
-    # تم تعديل طريقة التحميل لاستخدام .clear() و .update() للحفاظ على المراجع
     if os.path.exists(ORDERS_FILE):
         with open(ORDERS_FILE, "r") as f:
             try:
-                temp_data = json.load(f)
-                orders.clear() 
-                orders.update(temp_data) 
+                orders = json.load(f)
                 orders = {str(k): v for k, v in orders.items()}
             except json.JSONDecodeError:
-                orders.clear() 
+                orders = {}
                 logger.warning("orders.json is corrupted or empty, reinitializing.")
             except Exception as e:
                 logger.error(f"Error loading orders.json: {e}, reinitializing.")
-                orders.clear()
+                orders = {}
 
     if os.path.exists(PRICING_FILE):
         with open(PRICING_FILE, "r") as f:
             try:
-                temp_data = json.load(f)
-                pricing.clear()
-                pricing.update(temp_data)
+                pricing = json.load(f)
                 pricing = {str(k): v for k, v in pricing.items()}
                 for oid in pricing:
                     if isinstance(pricing[oid], dict):
                         pricing[oid] = {str(pk): pv for pk, pv in pricing[oid].items()}
             except json.JSONDecodeError:
-                pricing.clear()
+                pricing = {}
                 logger.warning("pricing.json is corrupted or empty, reinitializing.")
             except Exception as e:
                 logger.error(f"Error loading pricing.json: {e}, reinitializing.")
-                pricing.clear()
+                pricing = {}
 
     if os.path.exists(INVOICE_NUMBERS_FILE):
         with open(INVOICE_NUMBERS_FILE, "r") as f:
             try:
-                temp_data = json.load(f)
-                invoice_numbers.clear()
-                invoice_numbers.update(temp_data)
+                invoice_numbers = json.load(f)
                 invoice_numbers = {str(k): v for k, v in invoice_numbers.items()}
             except json.JSONDecodeError:
-                invoice_numbers.clear()
+                invoice_numbers = {}
                 logger.warning("invoice_numbers.json is corrupted or empty, reinitializing.")
             except Exception as e:
                 logger.error(f"Error loading invoice_numbers.json: {e}, reinitializing.")
-                invoice_numbers.clear()
+                invoice_numbers = {}
 
     if os.path.exists(DAILY_PROFIT_FILE):
         with open(DAILY_PROFIT_FILE, "r") as f:
@@ -106,16 +96,14 @@ def load_data():
     if os.path.exists(LAST_BUTTON_MESSAGE_FILE):
         with open(LAST_BUTTON_MESSAGE_FILE, "r") as f:
             try:
-                temp_data = json.load(f)
-                last_button_message.clear()
-                last_button_message.update(temp_data)
+                last_button_message = json.load(f)
                 last_button_message = {str(k): v for k, v in last_button_message.items()}
             except json.JSONDecodeError:
-                last_button_message.clear()
+                last_button_message = {}
                 logger.warning("last_button_message.json is corrupted or empty, reinitializing.")
             except Exception as e:
                 logger.error(f"Error loading last_button_message.json: {e}, reinitializing.")
-                last_button_message.clear()
+                last_button_message = {}
 
 # حفظ البيانات
 def save_data():
@@ -161,6 +149,14 @@ if TOKEN is None:
 if OWNER_ID is None:
     raise ValueError("OWNER_TELEGRAM_ID environment variable not set.")
 
+# دالة مساعدة لحذف الرسائل (تم إعادة إضافتها)
+async def delete_message_safe(context, chat_id, message_id):
+    try:
+        if message_id:
+            await context.bot.delete_message(chat_id=chat_id, message_id=message_id)
+            logger.info(f"Deleted message {message_id} in chat {chat_id}")
+    except Exception as e:
+        logger.warning(f"Could not delete message {message_id} in chat {chat_id}: {e}")
 
 # دالة لتنسيق الأرقام العشرية
 def format_float(value):
@@ -288,9 +284,11 @@ async def show_buttons(chat_id, context, user_id, order_id, is_final_buttons=Fal
     msg_info = last_button_message.get(order_id)
     if msg_info and msg_info.get("chat_id") == chat_id:
         try:
-            # **** ثم حذف الرسالة القديمة
-            await context.bot.delete_message(chat_id=chat_id, message_id=msg_info["message_id"])
-            logger.info(f"Deleted old button message {msg_info.get('message_id', 'N/A')} for order {order_id}: {e}. It might have been deleted already or is inaccessible.")
+            # **** ثم حذف الرسالة القديمة (باستخدام الدالة الجديدة)
+            await delete_message_safe(context, msg_info["chat_id"], msg_info["message_id"])
+            logger.info(f"Deleted old button message {msg_info.get('message_id', 'N/A')} for order {order_id}")
+        except Exception as e:
+            logger.warning(f"Could not delete old button message {msg_info.get('message_id', 'N/A')} for order {order_id}: {e}. It might have been deleted already or is inaccessible.")
             pass # تجاهل الخطأ إذا الرسالة لم تعد موجودة أو لا يمكن حذفها
         finally:
             # إزالة الإشارة للرسالة القديمة من الذاكرة والملف
@@ -387,18 +385,9 @@ async def receive_sell_price(update: Update, context: ContextTypes.DEFAULT_TYPE)
     order = orders[order_id]
     all_priced = True
     for p in order["products"]:
-        # السطر 660
-        if p in pricing.get(order_id, {}) and "buy" in pricing[order_id].get(p, {}) and "sell" in pricing[order_id].get(p, {}):
-            completed_products.append(p)
-        else:
-            pending_products.append(p)
-            break # <--- هنا الخطأ، break هذا يكسر الحلقة ويجعل all_priced True بشكل خاطئ
-
-    # التصحيح: يجب أن يكون الكود هكذا:
-    # for p in order["products"]:
-    #     if p not in pricing.get(order_id, {}) or "buy" not in pricing[order_id].get(p, {}) or "sell" not in pricing[order_id].get(p, {}):
-    #         all_priced = False
-    #         break
+        if p not in pricing.get(order_id, {}) or "buy" not in pricing[order_id].get(p, {}) or "sell" not in pricing[order_id].get(p, {}):
+            all_priced = False
+            break
             
     if all_priced:
         context.user_data["completed_order_id"] = order_id
@@ -509,25 +498,18 @@ async def receive_place_count(update: Update, context: ContextTypes.DEFAULT_TYPE
     invoice_text_for_owner.append(f"السعر الكلي: {format_float(total_with_extra)}")
     
     final_owner_invoice_text = "\n".join(invoice_text_for_owner)
-    
-    # ENCODED ADMIN INVOICE FOR WHATSAPP
-    encoded_owner_invoice = final_owner_invoice_text.replace(" ", "%20").replace("\n", "%0A").replace("*", "")
-    whatsapp_owner_button_markup = InlineKeyboardMarkup([
-        [InlineKeyboardButton("إرسال فاتورة الإدارة للواتساب", url=f"https://wa.me/{OWNER_PHONE_NUMBER}?text={encoded_owner_invoice}")]
-    ])
 
-    # إرسال فاتورة الإدارة وزر الواتساب الخاص بها إلى الخاص بالمالك (OWNER_ID)
+    # هذا الجزء سيتم إرساله إلى الخاص بالمالك (OWNER_ID)
     try:
         await context.bot.send_message(
             chat_id=OWNER_ID, # <--- يتم الإرسال إلى ID المالك فقط
             text=f"**فاتورة طلبية (الإدارة):**\n{final_owner_invoice_text}",
-            parse_mode="Markdown",
-            reply_markup=whatsapp_owner_button_markup # <--- إرسال زر الواتساب الخاص بمالك هنا
+            parse_mode="Markdown"
         )
-        logger.info(f"Admin invoice and WhatsApp button sent to OWNER_ID: {OWNER_ID}")
+        logger.info(f"Admin invoice sent to OWNER_ID: {OWNER_ID}")
     except Exception as e:
         logger.error(f"Could not send admin invoice to OWNER_ID {OWNER_ID}: {e}")
-        # إذا لم يتمكن من إرسالها للمالك، يخبر المستخدم في المحادثة
+        # إذا لم يتمكن من إرسالها للمالك، يرسل رسالة خطأ للمستخدم
         await message_to_send_from.reply_text("عذراً، لم أتمكن من إرسال فاتورة الإدارة إلى خاصك. يرجى التأكد من أنني أستطيع مراسلتك في الخاص (قد تحتاج إلى بدء محادثة معي أولاً).")
 
 
@@ -551,16 +533,16 @@ async def receive_place_count(update: Update, context: ContextTypes.DEFAULT_TYPE
         f"\nالمجموع الكلي: {format_float(total_with_extra)} (مع احتساب عدد المحلات)"
     )
     
-    # نسخة الزبون (ستظل في المحادثة العامة)
     await message_to_send_from.reply_text("نسخة الزبون (لإرسالها للعميل):\n" + customer_text, parse_mode="Markdown")
 
+    encoded_owner_invoice = final_owner_invoice_text.replace(" ", "%20").replace("\n", "%0A").replace("*", "")
     encoded_customer_invoice = customer_text.replace(" ", "%20").replace("\n", "%0A").replace("*", "")
 
-    # زر الواتساب الخاص بالزبون (سيبقى في المحادثة العامة)
-    whatsapp_customer_button_markup = InlineKeyboardMarkup([
+    whatsapp_buttons_markup = InlineKeyboardMarkup([
+        [InlineKeyboardButton("إرسال فاتورة الإدارة للواتساب", url=f"https://wa.me/{OWNER_PHONE_NUMBER}?text={encoded_owner_invoice}")],
         [InlineKeyboardButton("إرسال فاتورة الزبون للواتساب", url=f"https://wa.me/{OWNER_PHONE_NUMBER}?text={encoded_customer_invoice}")]
     ])
-    await message_to_send_from.reply_text("دوس على هذه الأزرار لإرسال فاتورة الزبون عبر الواتساب:", reply_markup=whatsapp_customer_button_markup)
+    await message_to_send_from.reply_text("دوس على هذه الأزرار لإرسال الفواتير عبر الواتساب:", reply_markup=whatsapp_buttons_markup)
     
     final_actions_keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("تعديل الطلب الأخير", callback_data=f"edit_last_order_{order_id}")],
