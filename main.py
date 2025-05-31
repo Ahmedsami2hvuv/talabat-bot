@@ -28,7 +28,7 @@ COUNTER_FILE = os.path.join(DATA_DIR, "invoice_counter.txt")
 # ملف لحفظ IDs رسائل الأزرار لكي لا يتم حذفها عند إعادة التشغيل
 LAST_BUTTON_MESSAGE_FILE = os.path.join(DATA_DIR, "last_button_message.json")
 
-# ملاحظة: ملف MESSAGES_TO_DELETE_FILE لم يتم إضافته بعد لإزالة ميزة الحذف التلقائي مؤقتاً
+# ملاحظة: ملف MESSAGES_TO_DELETE_FILE لم يتم إضافته هنا بعد لإزالة ميزة الحذف التلقائي مؤقتاً
 
 # تهيئة المتغيرات العامة في النطاق العلوي لضمان وجودها
 orders = {}
@@ -37,11 +37,11 @@ invoice_numbers = {}
 daily_profit = 0.0
 last_button_message = {} 
 current_product = {} 
-# messages_to_delete = {} # <--- تم إزالة هذا المتغير مؤقتاً حتى نرى سبب المشكلة
+# messages_to_delete = {} # <--- ما زلنا لم نقم بتضمين هذا المتغير أو وظيفته لحذف الرسائل بعد
 
 # تحميل البيانات عند بدء تشغيل البوت
 def load_data():
-    global orders, pricing, invoice_numbers, daily_profit, last_button_message, current_product # , messages_to_delete # تم إزالته من هنا أيضاً
+    global orders, pricing, invoice_numbers, daily_profit, last_button_message, current_product
 
     os.makedirs(DATA_DIR, exist_ok=True)
 
@@ -117,21 +117,6 @@ def load_data():
                 logger.error(f"Error loading last_button_message.json: {e}, reinitializing.")
                 last_button_message.clear()
 
-    # ملف MESSAGES_TO_DELETE_FILE لم يعد يتم التعامل معه هنا
-    # if os.path.exists(MESSAGES_TO_DELETE_FILE):
-    #     with open(MESSAGES_TO_DELETE_FILE, "r") as f:
-    #         try:
-    #             temp_data = json.load(f)
-    #             messages_to_delete.clear() 
-    #             messages_to_delete.update(temp_data) 
-    #             messages_to_delete = {str(k): v for k, v in messages_to_delete.items()}
-    #         except json.JSONDecodeError:
-    #             messages_to_delete.clear() 
-    #             logger.warning("messages_to_delete.json is corrupted or empty, reinitializing.")
-    #         except Exception as e:
-    #             logger.error(f"Error loading messages_to_delete.json: {e}, reinitializing.")
-    #             messages_to_delete.clear()
-
 # حفظ البيانات
 def save_data():
     os.makedirs(DATA_DIR, exist_ok=True)
@@ -146,9 +131,6 @@ def save_data():
     # حفظ IDs رسائل الأزرار
     with open(LAST_BUTTON_MESSAGE_FILE, "w") as f:
         json.dump(last_button_message, f)
-    # ملف MESSAGES_TO_DELETE_FILE لم يعد يتم التعامل معه هنا
-    # with open(MESSAGES_TO_DELETE_FILE, "w") as f:
-    #     json.dump(messages_to_delete, f)
 
 # تهيئة ملف عداد الفواتير
 os.makedirs(DATA_DIR, exist_ok=True)
@@ -519,11 +501,19 @@ async def receive_place_count(update: Update, context: ContextTypes.DEFAULT_TYPE
     
     final_owner_invoice_text = "\n".join(invoice_text_for_owner)
 
-    # هذا الجزء سيتم إرساله في المحادثة العامة (نسخة الإدارة)
-    await message_to_send_from.reply_text(
-        f"**الفاتورة النهائية (لك):**\n{final_owner_invoice_text}",
-        parse_mode="Markdown"
-    )
+    # هذا هو الجزء الذي يرسل فاتورة الإدارة إلى الخاص (OWNER_ID)
+    try:
+        await context.bot.send_message(
+            chat_id=OWNER_ID, # <--- يتم الإرسال إلى ID المالك فقط
+            text=f"**فاتورة طلبية (الإدارة):**\n{final_owner_invoice_text}",
+            parse_mode="Markdown"
+        )
+        logger.info(f"Admin invoice sent to OWNER_ID: {OWNER_ID}")
+    except Exception as e:
+        logger.error(f"Could not send admin invoice to OWNER_ID {OWNER_ID}: {e}")
+        # إذا لم يتمكن من إرسالها للمالك، يخبر المستخدم
+        await message_to_send_from.reply_text("عذراً، لم أتمكن من إرسال فاتورة الإدارة إلى خاصك. يرجى التأكد من أنني أستطيع مراسلتك في الخاص (قد تحتاج إلى بدء محادثة معي أولاً).")
+
 
     running_total = 0.0
     customer_lines = []
@@ -742,4 +732,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
