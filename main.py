@@ -27,42 +27,36 @@ DAILY_PROFIT_FILE = os.path.join(DATA_DIR, "daily_profit.json")
 COUNTER_FILE = os.path.join(DATA_DIR, "invoice_counter.txt")
 # ملف لحفظ IDs رسائل الأزرار لكي لا يتم حذفها عند إعادة التشغيل
 LAST_BUTTON_MESSAGE_FILE = os.path.join(DATA_DIR, "last_button_message.json")
-
 # ملف لحفظ IDs الرسائل التي يجب حذفها لاحقاً
 MESSAGES_TO_DELETE_FILE = os.path.join(DATA_DIR, "messages_to_delete.json")
 
 
-# تهيئة المتغيرات العامة في النطاق العلوي لضمان وجودها
+# تهيئة المتغيرات العامة في النطاق العلوي لضمان وجودها من البداية
 orders = {}
 pricing = {}
 invoice_numbers = {}
 daily_profit = 0.0
 last_button_message = {}
 current_product = {}
-messages_to_delete = {} # <--- تم نقل التهيئة هنا
+messages_to_delete = {} # <--- التصحيح: تم تهيئته هنا كمتغير عام
+
 
 # تحميل البيانات عند بدء تشغيل البوت
 def load_data():
     global orders, pricing, invoice_numbers, daily_profit, last_button_message, current_product, messages_to_delete
-
-    # لا داعي لإعادة تهيئة المتغيرات هنا إذا تم تهيئتها في النطاق العام
-    # orders = {}
-    # pricing = {}
-    # invoice_numbers = {}
-    # daily_profit = 0.0
-    # last_button_message = {}
-    # current_product = {}
-    # messages_to_delete = {} 
 
     os.makedirs(DATA_DIR, exist_ok=True)
 
     if os.path.exists(ORDERS_FILE):
         with open(ORDERS_FILE, "r") as f:
             try:
-                orders.update(json.load(f)) # <--- استخدام update بدلا من = {} لضمان دمج البيانات
-                orders = {str(k): v for k, v in orders.items()}
+                # نستخدم .update() بدلاً من إعادة التعيين بـ = {} للحفاظ على المرجع
+                temp_data = json.load(f)
+                orders.clear() # نمسح القديم بالكامل
+                orders.update(temp_data) # نضيف الجديد
+                orders = {str(k): v for k, v in orders.items()} # تحويل المفاتيح إلى سلاسل نصية
             except json.JSONDecodeError:
-                orders.clear() # <--- استخدام clear() بدلاً من = {}
+                orders.clear() # تفريغ القاموس إذا كان الملف تالفاً
                 logger.warning("orders.json is corrupted or empty, reinitializing.")
             except Exception as e:
                 logger.error(f"Error loading orders.json: {e}, reinitializing.")
@@ -71,8 +65,10 @@ def load_data():
     if os.path.exists(PRICING_FILE):
         with open(PRICING_FILE, "r") as f:
             try:
-                pricing.update(json.load(f))
-                pricing = {str(k): v for pk, pv in pricing.items()}
+                temp_data = json.load(f)
+                pricing.clear()
+                pricing.update(temp_data)
+                pricing = {str(k): v for k, v in pricing.items()}
                 for oid in pricing:
                     if isinstance(pricing[oid], dict):
                         pricing[oid] = {str(pk): pv for pk, pv in pricing[oid].items()}
@@ -86,7 +82,9 @@ def load_data():
     if os.path.exists(INVOICE_NUMBERS_FILE):
         with open(INVOICE_NUMBERS_FILE, "r") as f:
             try:
-                invoice_numbers.update(json.load(f))
+                temp_data = json.load(f)
+                invoice_numbers.clear()
+                invoice_numbers.update(temp_data)
                 invoice_numbers = {str(k): v for k, v in invoice_numbers.items()}
             except json.JSONDecodeError:
                 invoice_numbers.clear()
@@ -98,6 +96,7 @@ def load_data():
     if os.path.exists(DAILY_PROFIT_FILE):
         with open(DAILY_PROFIT_FILE, "r") as f:
             try:
+                # daily_profit هو رقم، فلا نستخدم .update()
                 daily_profit = json.load(f)
             except json.JSONDecodeError:
                 daily_profit = 0.0
@@ -110,7 +109,9 @@ def load_data():
     if os.path.exists(LAST_BUTTON_MESSAGE_FILE):
         with open(LAST_BUTTON_MESSAGE_FILE, "r") as f:
             try:
-                last_button_message.update(json.load(f))
+                temp_data = json.load(f)
+                last_button_message.clear()
+                last_button_message.update(temp_data)
                 last_button_message = {str(k): v for k, v in last_button_message.items()}
             except json.JSONDecodeError:
                 last_button_message.clear()
@@ -123,10 +124,12 @@ def load_data():
     if os.path.exists(MESSAGES_TO_DELETE_FILE):
         with open(MESSAGES_TO_DELETE_FILE, "r") as f:
             try:
-                messages_to_delete.update(json.load(f)) # <--- استخدام update بدلاً من = {}
+                temp_data = json.load(f)
+                messages_to_delete.clear() # <--- التصحيح: مسح القديم
+                messages_to_delete.update(temp_data) # <--- التصحيح: إضافة الجديد
                 messages_to_delete = {str(k): v for k, v in messages_to_delete.items()}
             except json.JSONDecodeError:
-                messages_to_delete.clear()
+                messages_to_delete.clear() # <--- التصحيح: مسح القاموس عند الفشل
                 logger.warning("messages_to_delete.json is corrupted or empty, reinitializing.")
             except Exception as e:
                 logger.error(f"Error loading messages_to_delete.json: {e}, reinitializing.")
@@ -178,6 +181,7 @@ if TOKEN is None:
     raise ValueError("TELEGRAM_BOT_TOKEN environment variable not set.")
 if OWNER_ID is None:
     raise ValueError("OWNER_TELEGRAM_ID environment variable not set.")
+
 
 # دالة مساعدة لحذف الرسائل
 async def delete_message_safe(context, chat_id, message_id):
@@ -321,7 +325,7 @@ async def show_buttons(chat_id, context, user_id, order_id, is_final_buttons=Fal
     
     markup = InlineKeyboardMarkup(buttons_list)
     
-    # **** التعديل هنا: إرسال الرسالة الجديدة أولاً
+    # **** إرسال الرسالة الجديدة أولاً
     msg = await context.bot.send_message(
         chat_id=chat_id,
         text=f"اضغط على منتج لتحديد سعره من *{order['title']}*:",
@@ -337,8 +341,6 @@ async def show_buttons(chat_id, context, user_id, order_id, is_final_buttons=Fal
         # إزالة الإشارة للرسالة القديمة من الذاكرة والملف
         if order_id in last_button_message:
             del last_button_message[order_id]
-            # لا نحتاج لحفظ البيانات هنا لأننا سنحفظها بعد إضافة الرسالة الجديدة
-            # save_data() 
     
     last_button_message[order_id] = {"chat_id": chat_id, "message_id": msg.message_id}
     save_data() # حفظ الـ ID والـ chat_id للرسالة الجديدة
