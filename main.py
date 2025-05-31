@@ -247,7 +247,7 @@ async def process_order(update, context, message, edited=False):
 async def show_buttons(chat_id, context, user_id, order_id, is_final_buttons=False):
     if order_id not in orders:
         logger.warning(f"Attempted to show buttons for non-existent order_id: {order_id}")
-        await context.bot.send_message(chat_id=chat_id, text="عذراً، الطلب الذي تحاول الوصول إليه غير موجود أو تم حذفه. الرجاء بدء طلبية جديدة.")
+        await context.bot.send_message(chat_id=chat_id, text="الطلبية الي تريدها يمكن محذوفة لانها غير موجوده توكل وسوي طلب جديد حالك حال الوادم.")
         return
 
     order = orders[order_id]
@@ -275,7 +275,7 @@ async def show_buttons(chat_id, context, user_id, order_id, is_final_buttons=Fal
     # **** التعديل هنا: إرسال الرسالة الجديدة أولاً
     msg = await context.bot.send_message(
         chat_id=chat_id,
-        text=f"اضغط على منتج لتحديد سعره من *{order['title']}*:",
+        text=f"دوس على المنتج حتى تكتب سعره *{order['title']}*:",
         reply_markup=markup,
         parse_mode="Markdown"
     )
@@ -562,10 +562,10 @@ async def receive_place_count(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 
     final_actions_keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("تعديل الطلب الأخير", callback_data=f"edit_last_order_{order_id}")],
-        [InlineKeyboardButton("إنشاء طلب جديد", callback_data="start_new_order")]
+        [InlineKeyboardButton("عدل الطلب", callback_data=f"edit_last_order_{order_id}")],
+        [InlineKeyboardButton("سوي طلب جديد", callback_data="start_new_order")]
     ])
-    await message_to_send_from.reply_text("شنو تريد تسوي هسه؟", reply_markup=final_actions_keyboard)
+    await message_to_send_from.reply_text("اختار بكيفك", reply_markup=final_actions_keyboard)
 
     return ConversationHandler.END
 
@@ -577,11 +577,11 @@ async def edit_last_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if query.data.startswith("edit_last_order_"):
         order_id = query.data.replace("edit_last_order_", "")
     else:
-        await query.message.reply_text("عذراً، حدث خطأ في بيانات الزر. الرجاء المحاولة مرة أخرى.")
+        await query.message.reply_text("اسف حبي صار خطا بيانات الدكمه ادوسها من جديد.")
         return ConversationHandler.END
 
     if order_id not in orders or str(orders[order_id].get("user_id")) != user_id:
-        await query.message.reply_text("عذراً، الطلب الذي تحاول تعديله غير موجود أو ليس لك.")
+        await query.message.reply_text(" اسف حبي الطلب او المنتج مو موجود.")
         return ConversationHandler.END
 
     await show_buttons(query.message.chat_id, context, user_id, order_id)
@@ -597,13 +597,13 @@ async def start_new_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def show_profit(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if str(update.message.from_user.id) != str(OWNER_ID):
-        await update.message.reply_text("عذراً، هذا الأمر متاح للمالك فقط.")
+        await update.message.reply_text("عوف لكلاوات.")
         return
     await update.message.reply_text(f"الربح التراكمي الإجمالي: *{format_float(daily_profit)}* دينار", parse_mode="Markdown")
 
 async def reset_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if str(update.message.from_user.id) != str(OWNER_ID):
-        await update.message.reply_text("عذراً، هذا الأمر متاح للمالك فقط.")
+        await update.message.reply_text("عوف الكلاوات.")
         return
     
     keyboard = [
@@ -611,14 +611,14 @@ async def reset_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("لا، إلغاء", callback_data="cancel_reset")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text("هل أنت متأكد من تصفير جميع الأرباح ومسح كل الطلبات؟ هذا الإجراء لا يمكن التراجع عنه.", reply_markup=reply_markup)
+    await update.message.reply_text("يابه متاكد مو بعدين تضل تلطم.", reply_markup=reply_markup)
 
 async def confirm_reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
 
     if str(query.from_user.id) != str(OWNER_ID):
-        await query.edit_message_text("عذراً، لا تملك صلاحية لتنفيذ هذا الأمر.")
+        await query.edit_message_text("افتر وارجع.")
         return
 
     if query.data == "confirm_reset":
@@ -636,13 +636,13 @@ async def confirm_reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logger.error(f"Could not reset invoice counter file: {e}")
 
         save_data()
-        await query.edit_message_text("تم تصفير الأرباح ومسح كل الطلبات بنجاح.")
+        await query.edit_message_text("دهاك صفرتلك كلشي.")
     elif query.data == "cancel_reset":
-        await query.edit_message_text("تم إلغاء عملية التصفير.")
+        await query.edit_message_text("ها شحجينه .لغيت عملية التصفير.")
 
 async def show_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if str(update.message.from_user.id) != str(OWNER_ID):
-        await update.message.reply_text("عذراً، هذا الأمر متاح للمالك فقط.")
+        await update.message.reply_text("ادور وراي.")
         return
     
     total_orders = len(orders)
