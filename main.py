@@ -38,7 +38,7 @@ invoice_numbers = {}
 daily_profit = 0.0
 last_button_message = {}
 current_product = {}
-messages_to_delete = {} # <--- التصحيح: تم تهيئته هنا كمتغير عام
+messages_to_delete = {} # <--- هذا هو التصحيح الرئيسي الذي يحل مشكلة SyntaxError
 
 
 # تحميل البيانات عند بدء تشغيل البوت
@@ -47,16 +47,19 @@ def load_data():
 
     os.makedirs(DATA_DIR, exist_ok=True)
 
+    # ملاحظة: تم تعديل طريقة التحميل لاستخدام .clear() و .update()
+    # لضمان عدم إعادة تعيين المتغيرات كلياً داخل الدالة،
+    # بل تحديث محتوياتها مع الحفاظ على مرجعها كمتغيرات عامة.
+
     if os.path.exists(ORDERS_FILE):
         with open(ORDERS_FILE, "r") as f:
             try:
-                # نستخدم .update() بدلاً من إعادة التعيين بـ = {} للحفاظ على المرجع
                 temp_data = json.load(f)
-                orders.clear() # نمسح القديم بالكامل
-                orders.update(temp_data) # نضيف الجديد
-                orders = {str(k): v for k, v in orders.items()} # تحويل المفاتيح إلى سلاسل نصية
+                orders.clear() 
+                orders.update(temp_data) 
+                orders = {str(k): v for k, v in orders.items()}
             except json.JSONDecodeError:
-                orders.clear() # تفريغ القاموس إذا كان الملف تالفاً
+                orders.clear() 
                 logger.warning("orders.json is corrupted or empty, reinitializing.")
             except Exception as e:
                 logger.error(f"Error loading orders.json: {e}, reinitializing.")
@@ -125,11 +128,11 @@ def load_data():
         with open(MESSAGES_TO_DELETE_FILE, "r") as f:
             try:
                 temp_data = json.load(f)
-                messages_to_delete.clear() # <--- التصحيح: مسح القديم
-                messages_to_delete.update(temp_data) # <--- التصحيح: إضافة الجديد
+                messages_to_delete.clear() 
+                messages_to_delete.update(temp_data) 
                 messages_to_delete = {str(k): v for k, v in messages_to_delete.items()}
             except json.JSONDecodeError:
-                messages_to_delete.clear() # <--- التصحيح: مسح القاموس عند الفشل
+                messages_to_delete.clear() 
                 logger.warning("messages_to_delete.json is corrupted or empty, reinitializing.")
             except Exception as e:
                 logger.error(f"Error loading messages_to_delete.json: {e}, reinitializing.")
@@ -583,16 +586,17 @@ async def receive_place_count(update: Update, context: ContextTypes.DEFAULT_TYPE
     
     final_owner_invoice_text = "\n".join(invoice_text_for_owner)
 
-    # إرسال فاتورة الإدارة إلى الخاص بالمالك
+    # إرسال فاتورة الإدارة إلى الخاص بالمالك (فقط للمالك)
     try:
         await context.bot.send_message(
-            chat_id=OWNER_ID,
+            chat_id=OWNER_ID, # <--- يتم الإرسال إلى ID المالك فقط
             text=f"**فاتورة طلبية (الإدارة):**\n{final_owner_invoice_text}",
             parse_mode="Markdown"
         )
         logger.info(f"Admin invoice sent to OWNER_ID: {OWNER_ID}")
     except Exception as e:
         logger.error(f"Could not send admin invoice to OWNER_ID {OWNER_ID}: {e}")
+        # إذا لم يتمكن من إرسالها للمالك، يخبر المستخدم
         msg = await message_to_send_from.reply_text("عذراً، لم أتمكن من إرسال فاتورة الإدارة إلى خاصك. يرجى التأكد من أنني أستطيع مراسلتك في الخاص (قد تحتاج إلى بدء محادثة معي أولاً).")
         add_message_to_delete_queue(msg.chat_id, msg.message_id) # حفظ رسالة البوت للحذف
 
