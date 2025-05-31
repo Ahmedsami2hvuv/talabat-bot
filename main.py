@@ -259,6 +259,8 @@ async def product_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         # تم تعديل طريقة تقسيم الـ callback_data
         # البحث عن أول | بعد "product_select_"
+        # هنا كانت المشكلة: إذا كانت الكولباك داتا من غير مكان (مثل زر الـ places)
+        # هذا الجزء راح يفشل. لازم نكون متأكدين من الـ pattern في الـ entry_points
         data_parts = query.data.split("_", 1)[1] # إزالة "product_select_"
         order_id, product = data_parts.split("|", 1) 
     except IndexError as e:
@@ -399,7 +401,10 @@ async def receive_place_count(update: Update, context: ContextTypes.DEFAULT_TYPE
             places = int(query.data.split("_")[1])
             message_to_edit = query.message # استخدم رسالة الكويري للتعديل عليها لاحقاً
         else:
-            await query.edit_message_text("عذراً، حدث خطأ في اختيار عدد المحلات.")
+            # إذا كان الكولباك كويري ليس لـ 'places_'، فليس من المفترض أن يصل إلى هنا.
+            # هذا قد يكون بسبب كليك على زر قديم أو مشكلة في توجيه المحادثة.
+            print(f"ERROR: Unexpected callback_query in receive_place_count: {query.data}")
+            await query.edit_message_text("عذراً، حدث خطأ غير متوقع. الرجاء المحاولة مرة أخرى أو بدء طلبية جديدة.")
             return ConversationHandler.END
     elif update.message:
         message_to_edit = update.message
@@ -413,7 +418,7 @@ async def receive_place_count(update: Update, context: ContextTypes.DEFAULT_TYPE
             return ASK_PLACES
     
     if places is None: # للتأكد إذا ماكو لا كويري ولا رسالة
-        return ASK_PLACES
+        return ConversationHandler.END # إنهاء المحادثة إذا لم يتم تحديد المحلات بشكل صحيح
 
     order_id = context.user_data.get("completed_order_id")
     # تأكد أن الطلب لا يزال موجوداً قبل الوصول إليه
