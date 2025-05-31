@@ -270,22 +270,22 @@ async def show_buttons(chat_id, context, user_id, order_id, is_final_buttons=Fal
     msg_info = last_button_message.get(order_id)
     if msg_info and msg_info.get("chat_id") == chat_id:
         try:
-            await context.bot.edit_message_text(
-                chat_id=chat_id,
-                message_id=msg_info["message_id"],
-                text=f"اضغط على منتج لتحديد سعره من *{order['title']}*:",
-                parse_mode="Markdown",
-                reply_markup=markup
-            )
-            logger.info(f"Edited existing button message {msg_info['message_id']} for order {order_id}")
-            return
+            # **** التعديل هنا: حذف الرسالة القديمة دائماً قبل إرسال الجديدة
+            await context.bot.delete_message(chat_id=chat_id, message_id=msg_info["message_id"])
+            logger.info(f"Deleted old button message {msg_info['message_id']} for order {order_id}")
         except Exception as e:
-            logger.warning(f"Could not edit old button message {msg_info.get('message_id', 'N/A')} for order {order_id}: {e}. Sending new message.")
-            del last_button_message[order_id]
+            logger.warning(f"Could not delete old button message {msg_info.get('message_id', 'N/A')} for order {order_id}: {e}. Proceeding to send new message.")
+            pass # تجاهل الخطأ إذا الرسالة لم تعد موجودة أو لا يمكن حذفها
+        finally:
+            # إزالة الإشارة للرسالة القديمة من الذاكرة والملف
+            if order_id in last_button_message:
+                del last_button_message[order_id]
+                save_data() # حفظ التغيير لضمان عدم الرجوع للرسالة المحذوفة بعد إعادة تشغيل البوت
 
+    # **** التعديل هنا: دائماً أرسل رسالة جديدة بالأزرار في أسفل الدردشة
     msg = await context.bot.send_message(chat_id=chat_id, text=f"اضغط على منتج لتحديد سعره من *{order['title']}*:", reply_markup=markup, parse_mode="Markdown")
     last_button_message[order_id] = {"chat_id": chat_id, "message_id": msg.message_id}
-    save_data()
+    save_data() # حفظ الـ ID والـ chat_id للرسالة الجديدة
     logger.info(f"Sent new button message {msg.message_id} for order {order_id}")
 
 
@@ -389,7 +389,7 @@ async def receive_sell_price(update: Update, context: ContextTypes.DEFAULT_TYPE)
         keyboard = [buttons[i:i + 5] for i in range(0, len(buttons), 5)]
         reply_markup = InlineKeyboardMarkup(keyboard)
 
-        # لا نحذف رسالة أزرار المنتجات هنا، بل تبقى موجودة للتعديل
+        # لا نحذف رسالة أزرار المنتجات هنا، بل تبقى موجودة للتعديل لأن show_buttons ستنشئ رسالة جديدة
         
         await update.message.reply_text("كل المنتجات تم تسعيرها. كم محل كلفتك الطلبية؟ (اختر من الأزرار أو اكتب الرقم)", reply_markup=reply_markup)
         return ASK_PLACES
@@ -421,7 +421,6 @@ async def receive_place_count(update: Update, context: ContextTypes.DEFAULT_TYPE
         if query.data.startswith("places_"):
             places = int(query.data.split("_")[1])
             message_to_send_from = query.message
-            # إزالة أزرار المحلات بعد الاختيار
             try:
                 await context.bot.edit_message_reply_markup(
                     chat_id=query.message.chat_id,
@@ -518,7 +517,6 @@ async def receive_place_count(update: Update, context: ContextTypes.DEFAULT_TYPE
     
     await message_to_send_from.reply_text("نسخة الزبون (لإرسالها للعميل):\n" + customer_text, parse_mode="Markdown")
 
-    # **** إضافة روابط الواتساب كأزرار هنا ****
     encoded_owner_invoice = final_owner_invoice_text.replace(" ", "%20").replace("\n", "%0A").replace("*", "")
     encoded_customer_invoice = customer_text.replace(" ", "%20").replace("\n", "%0A").replace("*", "")
 
@@ -528,7 +526,6 @@ async def receive_place_count(update: Update, context: ContextTypes.DEFAULT_TYPE
     ])
     await message_to_send_from.reply_text("دوس على هذه الأزرار لإرسال الفواتير عبر الواتساب:", reply_markup=whatsapp_buttons_markup)
     
-    # **** إضافة أزرار "تعديل الطلب" و "طلب جديد" هنا
     final_actions_keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("تعديل الطلب الأخير", callback_data=f"edit_last_order_{order_id}")],
         [InlineKeyboardButton("إنشاء طلب جديد", callback_data="start_new_order")]
@@ -537,7 +534,6 @@ async def receive_place_count(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     return ConversationHandler.END
 
-# دالة للتعامل مع زر "تعديل الطلب"
 async def edit_last_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -555,7 +551,6 @@ async def edit_last_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await show_buttons(query.message.chat_id, context, user_id, order_id)
     
-    # نرجع إلى ASK_BUY لتنشيط ConversationHandler مرة أخرى والقدرة على الضغط على أزرار المنتجات
     return ASK_BUY
 
 async def start_new_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -617,15 +612,15 @@ async def show_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     total_orders = len(orders)
     total_products = 0
-    total_buy = 0.0
-    total_sell = 0.0
+    total_buy_all_orders = 0.0 # لتجميع الشراء من كل الطلبات
+    total_sell_all_orders = 0.0 # لتجميع البيع من كل الطلبات
     product_counter = Counter()
     details = []
 
     for order_id, order in orders.items():
         invoice = invoice_numbers.get(order_id, "غير معروف")
         details.append(f"\n**فاتورة رقم:** {invoice}")
-        details.append(f"**عنوان:** {order['title']}")
+        details.append(f"**عنوان الزبون:** {order['title']}") # تصحيح العنوان هنا
         
         order_buy = 0.0
         order_sell = 0.0
@@ -639,8 +634,6 @@ async def show_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     buy = pricing[order_id][p_name]["buy"]
                     sell = pricing[order_id][p_name]["sell"]
                     profit = sell - buy
-                    total_buy += buy
-                    total_sell += sell
                     order_buy += buy
                     order_sell += sell
                     details.append(f"  - {p_name} | شراء: {format_float(buy)} | بيع: {format_float(sell)} | ربح: {format_float(profit)}")
@@ -649,6 +642,8 @@ async def show_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             details.append(f"  (لا توجد منتجات محددة لهذا الطلب)")
 
+        total_buy_all_orders += order_buy
+        total_sell_all_orders += order_sell
         details.append(f"  *ربح هذه الطلبية:* {format_float(order_sell - order_buy)}")
 
     top_product_str = "لا يوجد"
@@ -658,13 +653,13 @@ async def show_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     result = (
         f"**--- تقرير عام عن الطلبات ---**\n"
-        f"**إجمالي الطلبات:** {total_orders}\n"
-        f"**إجمالي المنتجات المباعة:** {total_products}\n"
+        f"**إجمالي عدد الطلبات المعالجة:** {total_orders}\n"
+        f"**إجمالي عدد المنتجات المباعة (في الطلبات المعالجة):** {total_products}\n"
         f"**أكثر منتج تم طلبه:** {top_product_str}\n\n"
-        f"**مجموع الشراء الكلي:** {format_float(total_buy)}\n"
-        f"**مجموع البيع الكلي:** {format_float(total_sell)}\n"
-        f"**مجموع الأرباح الصافية الكلية:** {format_float(total_sell - total_buy)}\n"
-        f"**الربح التراكمي في البوت:** {format_float(daily_profit)} دينار\n\n"
+        f"**مجموع الشراء الكلي (للطلبات المعالجة):** {format_float(total_buy_all_orders)}\n"
+        f"**مجموع البيع الكلي (للطلبات المعالجة):** {format_float(total_sell_all_orders)}\n"
+        f"**صافي الربح الكلي (للطلبات المعالجة):** {format_float(total_sell_all_orders - total_buy_all_orders)}\n"
+        f"**الربح التراكمي في البوت (منذ آخر تصفير):** {format_float(daily_profit)} دينار\n\n"
         f"**--- تفاصيل الطلبات ---**\n" + "\n".join(details)
     )
     await update.message.reply_text(result, parse_mode="Markdown")
