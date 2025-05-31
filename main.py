@@ -267,19 +267,9 @@ async def show_buttons(chat_id, context, user_id, order_id, is_final_buttons=Fal
     
     markup = InlineKeyboardMarkup(buttons_list)
     
-    # رسالة أزرار المنتجات يجب أن تبقى ولا تحذف إلا عند إرسال طلب جديد لنفس العنوان
-    # لذلك، لا نحذف الرسالة هنا. بل نعدلها فقط إذا كانت موجودة.
-    
     msg_info = last_button_message.get(order_id)
     if msg_info and msg_info.get("chat_id") == chat_id:
         try:
-            # تعديل الرسالة الموجودة بدلاً من إرسال رسالة جديدة
-            await context.bot.edit_message_reply_markup(
-                chat_id=chat_id,
-                message_id=msg_info["message_id"],
-                reply_markup=markup
-            )
-            # تحديث نص الرسالة إن لزم الأمر
             await context.bot.edit_message_text(
                 chat_id=chat_id,
                 message_id=msg_info["message_id"],
@@ -288,16 +278,14 @@ async def show_buttons(chat_id, context, user_id, order_id, is_final_buttons=Fal
                 reply_markup=markup
             )
             logger.info(f"Edited existing button message {msg_info['message_id']} for order {order_id}")
-            return # لا حاجة لإرسال رسالة جديدة إذا تم التعديل
+            return
         except Exception as e:
             logger.warning(f"Could not edit old button message {msg_info.get('message_id', 'N/A')} for order {order_id}: {e}. Sending new message.")
-            # إذا فشل التعديل (مثل حذف المستخدم للرسالة)، سنرسل رسالة جديدة
-            del last_button_message[order_id] # حذف الإشارة للرسالة القديمة الفاشلة
+            del last_button_message[order_id]
 
-    # إذا لم تكن هناك رسالة موجودة أو فشل التعديل، أرسل رسالة جديدة
     msg = await context.bot.send_message(chat_id=chat_id, text=f"اضغط على منتج لتحديد سعره من *{order['title']}*:", reply_markup=markup, parse_mode="Markdown")
     last_button_message[order_id] = {"chat_id": chat_id, "message_id": msg.message_id}
-    save_data() # حفظ ID الرسالة الجديدة
+    save_data()
     logger.info(f"Sent new button message {msg.message_id} for order {order_id}")
 
 
@@ -401,16 +389,13 @@ async def receive_sell_price(update: Update, context: ContextTypes.DEFAULT_TYPE)
         keyboard = [buttons[i:i + 5] for i in range(0, len(buttons), 5)]
         reply_markup = InlineKeyboardMarkup(keyboard)
 
-        # **** هنا التغيير: لا تحذف رسالة أزرار المنتجات، فقط أزرار المحلات إذا كانت موجودة
-        # أزرار المنتجات ستبقى ويمكن للمجهز تعديلها لاحقاً
-        # إذا كانت هناك رسالة أزرار محلات سابقة، نحذفها أو نعدلها لتجنب الفوضى
-        # لكن لا نحذف رسالة أزرار المنتجات
+        # لا نحذف رسالة أزرار المنتجات هنا، بل تبقى موجودة للتعديل
         
         await update.message.reply_text("كل المنتجات تم تسعيرها. كم محل كلفتك الطلبية؟ (اختر من الأزرار أو اكتب الرقم)", reply_markup=reply_markup)
         return ASK_PLACES
     else:
         await show_buttons(update.effective_chat.id, context, user_id, order_id)
-        return ASK_BUY # نرجع لحالة ASK_BUY لتمكين اختيار منتج آخر أو تعديله
+        return ASK_BUY
 
 def calculate_extra(places):
     extra_fees = {
@@ -427,7 +412,7 @@ async def receive_place_count(update: Update, context: ContextTypes.DEFAULT_TYPE
     global daily_profit
     
     places = None
-    message_to_send_from = None # نستخدم هذا لتحديد الرسالة التي سنرسل منها الردود
+    message_to_send_from = None
 
     if update.callback_query:
         query = update.callback_query
@@ -436,12 +421,12 @@ async def receive_place_count(update: Update, context: ContextTypes.DEFAULT_TYPE
         if query.data.startswith("places_"):
             places = int(query.data.split("_")[1])
             message_to_send_from = query.message
-            # حذف أزرار المحلات بعد الاختيار لتجنب الكليكات المكررة
+            # إزالة أزرار المحلات بعد الاختيار
             try:
                 await context.bot.edit_message_reply_markup(
                     chat_id=query.message.chat_id,
                     message_id=query.message.message_id,
-                    reply_markup=None # لإزالة الأزرار
+                    reply_markup=None
                 )
             except Exception as e:
                 logger.warning(f"Could not remove places buttons: {e}")
@@ -507,7 +492,7 @@ async def receive_place_count(update: Update, context: ContextTypes.DEFAULT_TYPE
     final_owner_invoice_text = "\n".join(invoice_text_for_owner)
 
     await message_to_send_from.reply_text(
-        f"**الفاتورة النهائية:**\n{final_owner_invoice_text}",
+        f"**الفاتورة النهائية (لك):**\n{final_owner_invoice_text}",
         parse_mode="Markdown"
     )
 
@@ -531,11 +516,17 @@ async def receive_place_count(update: Update, context: ContextTypes.DEFAULT_TYPE
         f"\nالمجموع الكلي: {format_float(total_with_extra)} (مع احتساب عدد المحلات)"
     )
     
-    await message_to_send_from.reply_text("نسخة الزبون:\n" + customer_text, parse_mode="Markdown")
+    await message_to_send_from.reply_text("نسخة الزبون (لإرسالها للعميل):\n" + customer_text, parse_mode="Markdown")
 
+    # **** إضافة روابط الواتساب كأزرار هنا ****
     encoded_owner_invoice = final_owner_invoice_text.replace(" ", "%20").replace("\n", "%0A").replace("*", "")
-    wa_link = f"https://wa.me/{OWNER_PHONE_NUMBER}?text={encoded_owner_invoice}"
-    await message_to_send_from.reply_text("دوس على هذا الرابط حتى ترسل الفاتورة *لي* على الواتساب:\n" + wa_link, parse_mode="Markdown")
+    encoded_customer_invoice = customer_text.replace(" ", "%20").replace("\n", "%0A").replace("*", "")
+
+    whatsapp_buttons_markup = InlineKeyboardMarkup([
+        [InlineKeyboardButton("إرسال فاتورة الإدارة للواتساب", url=f"https://wa.me/{OWNER_PHONE_NUMBER}?text={encoded_owner_invoice}")],
+        [InlineKeyboardButton("إرسال فاتورة الزبون للواتساب", url=f"https://wa.me/{OWNER_PHONE_NUMBER}?text={encoded_customer_invoice}")]
+    ])
+    await message_to_send_from.reply_text("دوس على هذه الأزرار لإرسال الفواتير عبر الواتساب:", reply_markup=whatsapp_buttons_markup)
     
     # **** إضافة أزرار "تعديل الطلب" و "طلب جديد" هنا
     final_actions_keyboard = InlineKeyboardMarkup([
@@ -544,20 +535,17 @@ async def receive_place_count(update: Update, context: ContextTypes.DEFAULT_TYPE
     ])
     await message_to_send_from.reply_text("شنو تريد تسوي هسه؟", reply_markup=final_actions_keyboard)
 
+    return ConversationHandler.END
 
-    return ConversationHandler.END # إنهاء المحادثة بعد إكمال الطلب وإظهار الخيارات الجديدة
-
-# **** دالة جديدة للتعامل مع زر "تعديل الطلب"
+# دالة للتعامل مع زر "تعديل الطلب"
 async def edit_last_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     
     user_id = str(query.from_user.id)
-    # استخلاص order_id من الـ callback_data
     if query.data.startswith("edit_last_order_"):
         order_id = query.data.replace("edit_last_order_", "")
     else:
-        # هذا لا يجب أن يحدث إذا كان النمط صحيحاً
         await query.message.reply_text("عذراً، حدث خطأ في بيانات الزر. الرجاء المحاولة مرة أخرى.")
         return ConversationHandler.END
 
@@ -565,20 +553,16 @@ async def edit_last_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.message.reply_text("عذراً، الطلب الذي تحاول تعديله غير موجود أو ليس لك.")
         return ConversationHandler.END
 
-    # إعادة عرض أزرار المنتجات لهذا الطلب
     await show_buttons(query.message.chat_id, context, user_id, order_id)
     
-    # يجب أن يعود إلى حالة تسمح باستقبال ضغطات الأزرار (product_selected)
-    # وبما أن product_selected موجود في ASK_BUY و ASK_SELL، يمكننا العودة إلى أي منهما
-    # أو يمكننا إنهاء المحادثة الحالية (لتبدأ من جديد عند الضغط على زر المنتج)
-    # ولكن الأفضل أن نعيدها إلى حالة تسمح بالضغط على زر منتج
-    return ASK_BUY # نرجع إلى ASK_BUY لتنشيط ConversationHandler مرة أخرى
+    # نرجع إلى ASK_BUY لتنشيط ConversationHandler مرة أخرى والقدرة على الضغط على أزرار المنتجات
+    return ASK_BUY
 
 async def start_new_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     await query.message.reply_text("تمام، دز الطلبية الجديدة كلها برسالة واحدة.\n\n*السطر الأول:* عنوان الزبون.\n*الأسطر الباقية:* كل منتج بسطر واحد.", parse_mode="Markdown")
-    return ConversationHandler.END # ننهي المحادثة الحالية لبدء واحدة جديدة بشكل طبيعي عند إرسال الطلب
+    return ConversationHandler.END
 
 
 async def show_profit(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -613,7 +597,7 @@ async def confirm_reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
         orders.clear()
         pricing.clear()
         invoice_numbers.clear()
-        last_button_message.clear() # مسح معلومات رسائل الأزرار المحفوظة
+        last_button_message.clear()
         
         try:
             with open(COUNTER_FILE, "w") as f:
@@ -706,16 +690,16 @@ def main():
     conv_handler = ConversationHandler(
         entry_points=[
             MessageHandler(filters.TEXT & ~filters.COMMAND, receive_order),
-            CallbackQueryHandler(product_selected) # هذا الهاندلر سيستقبل الـ CallbackQuery عندما تبدأ المحادثة أو بعد انتهائها
+            CallbackQueryHandler(product_selected)
         ],
         states={
             ASK_BUY: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, receive_buy_price),
-                CallbackQueryHandler(product_selected) # يسمح بالضغط على أزرار المنتجات من هذه الحالة
+                CallbackQueryHandler(product_selected) 
             ],
             ASK_SELL: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, receive_sell_price),
-                CallbackQueryHandler(product_selected) # يسمح بالضغط على أزرار المنتجات من هذه الحالة
+                CallbackQueryHandler(product_selected) 
             ],
             ASK_PLACES: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, receive_place_count),
