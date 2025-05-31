@@ -32,58 +32,68 @@ LAST_BUTTON_MESSAGE_FILE = os.path.join(DATA_DIR, "last_button_message.json")
 MESSAGES_TO_DELETE_FILE = os.path.join(DATA_DIR, "messages_to_delete.json")
 
 
+# تهيئة المتغيرات العامة في النطاق العلوي لضمان وجودها
+orders = {}
+pricing = {}
+invoice_numbers = {}
+daily_profit = 0.0
+last_button_message = {}
+current_product = {}
+messages_to_delete = {} # <--- تم نقل التهيئة هنا
+
 # تحميل البيانات عند بدء تشغيل البوت
 def load_data():
     global orders, pricing, invoice_numbers, daily_profit, last_button_message, current_product, messages_to_delete
 
-    orders = {}
-    pricing = {}
-    invoice_numbers = {}
-    daily_profit = 0.0
-    last_button_message = {} # هذا ما راح ينحفظ، لأنه يتعلق بحالة الرسائل في الوقت الحالي
-    current_product = {} # تم تهيئته هنا لضمان وجوده دائماً
-    messages_to_delete = {} # تهيئة قاموس الرسائل للحذف
+    # لا داعي لإعادة تهيئة المتغيرات هنا إذا تم تهيئتها في النطاق العام
+    # orders = {}
+    # pricing = {}
+    # invoice_numbers = {}
+    # daily_profit = 0.0
+    # last_button_message = {}
+    # current_product = {}
+    # messages_to_delete = {} 
 
     os.makedirs(DATA_DIR, exist_ok=True)
 
     if os.path.exists(ORDERS_FILE):
         with open(ORDERS_FILE, "r") as f:
             try:
-                orders = json.load(f)
+                orders.update(json.load(f)) # <--- استخدام update بدلا من = {} لضمان دمج البيانات
                 orders = {str(k): v for k, v in orders.items()}
             except json.JSONDecodeError:
-                orders = {}
+                orders.clear() # <--- استخدام clear() بدلاً من = {}
                 logger.warning("orders.json is corrupted or empty, reinitializing.")
             except Exception as e:
                 logger.error(f"Error loading orders.json: {e}, reinitializing.")
-                orders = {}
+                orders.clear()
 
     if os.path.exists(PRICING_FILE):
         with open(PRICING_FILE, "r") as f:
             try:
-                pricing = json.load(f)
+                pricing.update(json.load(f))
                 pricing = {str(k): v for pk, pv in pricing.items()}
                 for oid in pricing:
                     if isinstance(pricing[oid], dict):
                         pricing[oid] = {str(pk): pv for pk, pv in pricing[oid].items()}
             except json.JSONDecodeError:
-                pricing = {}
+                pricing.clear()
                 logger.warning("pricing.json is corrupted or empty, reinitializing.")
             except Exception as e:
                 logger.error(f"Error loading pricing.json: {e}, reinitializing.")
-                pricing = {}
+                pricing.clear()
 
     if os.path.exists(INVOICE_NUMBERS_FILE):
         with open(INVOICE_NUMBERS_FILE, "r") as f:
             try:
-                invoice_numbers = json.load(f)
+                invoice_numbers.update(json.load(f))
                 invoice_numbers = {str(k): v for k, v in invoice_numbers.items()}
             except json.JSONDecodeError:
-                invoice_numbers = {}
+                invoice_numbers.clear()
                 logger.warning("invoice_numbers.json is corrupted or empty, reinitializing.")
             except Exception as e:
                 logger.error(f"Error loading invoice_numbers.json: {e}, reinitializing.")
-                invoice_numbers = {}
+                invoice_numbers.clear()
 
     if os.path.exists(DAILY_PROFIT_FILE):
         with open(DAILY_PROFIT_FILE, "r") as f:
@@ -100,27 +110,27 @@ def load_data():
     if os.path.exists(LAST_BUTTON_MESSAGE_FILE):
         with open(LAST_BUTTON_MESSAGE_FILE, "r") as f:
             try:
-                last_button_message = json.load(f)
+                last_button_message.update(json.load(f))
                 last_button_message = {str(k): v for k, v in last_button_message.items()}
             except json.JSONDecodeError:
-                last_button_message = {}
+                last_button_message.clear()
                 logger.warning("last_button_message.json is corrupted or empty, reinitializing.")
             except Exception as e:
                 logger.error(f"Error loading last_button_message.json: {e}, reinitializing.")
-                last_button_message = {}
+                last_button_message.clear()
 
     # تحميل الرسائل للحذف
     if os.path.exists(MESSAGES_TO_DELETE_FILE):
         with open(MESSAGES_TO_DELETE_FILE, "r") as f:
             try:
-                messages_to_delete = json.load(f)
+                messages_to_delete.update(json.load(f)) # <--- استخدام update بدلاً من = {}
                 messages_to_delete = {str(k): v for k, v in messages_to_delete.items()}
             except json.JSONDecodeError:
-                messages_to_delete = {}
+                messages_to_delete.clear()
                 logger.warning("messages_to_delete.json is corrupted or empty, reinitializing.")
             except Exception as e:
                 logger.error(f"Error loading messages_to_delete.json: {e}, reinitializing.")
-                messages_to_delete = {}
+                messages_to_delete.clear()
 
 # حفظ البيانات
 def save_data():
@@ -626,12 +636,11 @@ async def receive_place_count(update: Update, context: ContextTypes.DEFAULT_TYPE
     add_message_to_delete_queue(msg.chat_id, msg.message_id) # حفظ رسالة البوت للحذف
 
     # حذف جميع الرسائل من قائمة الانتظار لهذا المستخدم بعد اكتمال الطلب
-    # (يمكن تعديل هذا السلوك إذا أردت حذفها بعد فترة زمنية أو حدث آخر)
     chat_id_str = str(message_to_send_from.chat_id)
     if chat_id_str in messages_to_delete:
-        for msg_id in list(messages_to_delete[chat_id_str]): # نستخدم list لتجنب مشاكل التعديل أثناء المرور
+        for msg_id in list(messages_to_delete[chat_id_str]): 
             await delete_message_safe(context, chat_id_str, msg_id)
-        messages_to_delete[chat_id_str].clear() # تفريغ القائمة بعد الحذف
+        messages_to_delete[chat_id_str].clear() 
         save_data()
 
 
