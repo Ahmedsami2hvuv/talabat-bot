@@ -28,6 +28,7 @@ COUNTER_FILE = os.path.join(DATA_DIR, "invoice_counter.txt")
 # ملف لحفظ IDs رسائل الأزرار لكي لا يتم حذفها عند إعادة التشغيل
 LAST_BUTTON_MESSAGE_FILE = os.path.join(DATA_DIR, "last_button_message.json")
 # ملف لحفظ IDs الرسائل التي يجب حذفها لاحقاً
+# هذا الملف ما زال موجوداً لحذف رسائل البوت فقط
 MESSAGES_TO_DELETE_FILE = os.path.join(DATA_DIR, "messages_to_delete.json")
 
 
@@ -219,13 +220,15 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def receive_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    add_message_to_delete_queue(update.message.chat_id, update.message.message_id) # حفظ رسالة المستخدم للحذف
+    # تم إزالة إضافة رسالة المستخدم للحذف هنا
+    # add_message_to_delete_queue(update.message.chat_id, update.message.message_id) 
     await process_order(update, context, update.message)
 
 async def edited_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.edited_message:
         return
-    add_message_to_delete_queue(update.edited_message.chat_id, update.edited_message.message_id) # حفظ رسالة المستخدم المعدلة للحذف
+    # تم إزالة إضافة رسالة المستخدم للحذف هنا
+    # add_message_to_delete_queue(update.edited_message.chat_id, update.edited_message.message_id) 
     await process_order(update, context, update.edited_message, edited=True)
 
 async def process_order(update, context, message, edited=False):
@@ -384,7 +387,8 @@ async def product_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def receive_buy_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.message.from_user.id)
-    add_message_to_delete_queue(update.message.chat_id, update.message.message_id) # حفظ رسالة المستخدم للحذف
+    # تم إزالة إضافة رسالة المستخدم للحذف هنا
+    # add_message_to_delete_queue(update.message.chat_id, update.message.message_id) 
     
     data = current_product.get(user_id)
     if not data:
@@ -419,7 +423,8 @@ async def receive_buy_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def receive_sell_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.message.from_user.id)
-    add_message_to_delete_queue(update.message.chat_id, update.message.message_id) # حفظ رسالة المستخدم للحذف
+    # تم إزالة إضافة رسالة المستخدم للحذف هنا
+    # add_message_to_delete_queue(update.message.chat_id, update.message.message_id) 
     
     data = current_product.get(user_id)
     if not data:
@@ -527,7 +532,8 @@ async def receive_place_count(update: Update, context: ContextTypes.DEFAULT_TYPE
             add_message_to_delete_queue(msg.chat_id, msg.message_id) # حفظ رسالة البوت للحذف
             return ConversationHandler.END
     elif update.message:
-        add_message_to_delete_queue(update.message.chat_id, update.message.message_id) # حفظ رسالة المستخدم للحذف
+        # تم إزالة إضافة رسالة المستخدم للحذف هنا
+        # add_message_to_delete_queue(update.message.chat_id, update.message.message_id) 
         message_to_send_from = update.message
         try:
             places = int(message_to_send_from.text.strip())
@@ -635,13 +641,13 @@ async def receive_place_count(update: Update, context: ContextTypes.DEFAULT_TYPE
     add_message_to_delete_queue(msg.chat_id, msg.message_id) # حفظ رسالة البوت للحذف
     
     final_actions_keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("تعديل الطلب الأخير", callback_data=f"edit_last_order_{order_id}")],
+        [InlineKeyboardButton("تعديل الطلب الأخير", callback_data=f"edit_last_order_{order_id})"],
         [InlineKeyboardButton("إنشاء طلب جديد", callback_data="start_new_order")]
     ])
     msg = await message_to_send_from.reply_text("شنو تريد تسوي هسه؟", reply_markup=final_actions_keyboard)
     add_message_to_delete_queue(msg.chat_id, msg.message_id) # حفظ رسالة البوت للحذف
 
-    # حذف جميع الرسائل من قائمة الانتظار لهذا المستخدم بعد اكتمال الطلب
+    # لا تزال هذه الدالة تحاول حذف رسائل البوت
     chat_id_str = str(message_to_send_from.chat_id)
     if chat_id_str in messages_to_delete:
         for msg_id in list(messages_to_delete[chat_id_str]): 
@@ -696,7 +702,8 @@ async def start_new_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def show_profit(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    add_message_to_delete_queue(update.message.chat_id, update.message.message_id) # حفظ رسالة المستخدم للحذف
+    # تم إزالة إضافة رسالة المستخدم للحذف هنا
+    # add_message_to_delete_queue(update.message.chat_id, update.message.message_id) 
 
     if str(update.message.from_user.id) != str(OWNER_ID):
         msg = await update.message.reply_text("عذراً، هذا الأمر متاح للمالك فقط.")
@@ -707,7 +714,8 @@ async def show_profit(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def reset_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    add_message_to_delete_queue(update.message.chat_id, update.message.message_id) # حفظ رسالة المستخدم للحذف
+    # تم إزالة إضافة رسالة المستخدم للحذف هنا
+    # add_message_to_delete_queue(update.message.chat_id, update.message.message_id) 
     if str(update.message.from_user.id) != str(OWNER_ID):
         msg = await update.message.reply_text("عذراً، هذا الأمر متاح للمالك فقط.")
         add_message_to_delete_queue(msg.chat_id, msg.message_id) # حفظ رسالة البوت للحذف
@@ -763,7 +771,8 @@ async def confirm_reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def show_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    add_message_to_delete_queue(update.message.chat_id, update.message.message_id) # حفظ رسالة المستخدم للحذف
+    # تم إزالة إضافة رسالة المستخدم للحذف هنا
+    # add_message_to_delete_queue(update.message.chat_id, update.message.message_id) 
 
     if str(update.message.from_user.id) != str(OWNER_ID):
         msg = await update.message.reply_text("عذراً، هذا الأمر متاح للمالك فقط.")
