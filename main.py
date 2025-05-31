@@ -235,8 +235,8 @@ async def show_buttons(chat_id, context, user_id, order_id):
         # التحقق مما إذا كان المنتج قد تم تسعيره بالكامل
         is_done = p in pricing.get(order_id, {}) and 'buy' in pricing[order_id].get(p, {}) and 'sell' in pricing[order_id].get(p, {})
         label = f"✅ {p}" if is_done else p
-        # هنا تم تعديل الـ callback_data لإضافة "product_select_" في البداية
-        buttons.append([InlineKeyboardButton(label, callback_data=f"product_select_{order_id}|{p}")]) 
+        # هنا تم إرجاع الـ callback_data إلى الشكل الأبسط
+        buttons.append([InlineKeyboardButton(label, callback_data=f"{order_id}|{p}")]) 
     
     markup = InlineKeyboardMarkup(buttons)
     
@@ -257,13 +257,9 @@ async def product_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer() # يجب الإجابة على الكولباك كويري
 
     try:
-        # تم تعديل طريقة تقسيم الـ callback_data
-        # البحث عن أول | بعد "product_select_"
-        # هنا كانت المشكلة: إذا كانت الكولباك داتا من غير مكان (مثل زر الـ places)
-        # هذا الجزء راح يفشل. لازم نكون متأكدين من الـ pattern في الـ entry_points
-        data_parts = query.data.split("_", 1)[1] # إزالة "product_select_"
-        order_id, product = data_parts.split("|", 1) 
-    except IndexError as e:
+        # تم إرجاع طريقة تقسيم الـ callback_data إلى الشكل الأبسط
+        order_id, product = query.data.split("|", 1) 
+    except ValueError as e: # تغير نوع الخطأ إلى ValueError إذا لم يكن هناك '|'
         print(f"ERROR: Failed to parse callback_data: {query.data}. Error: {e}")
         await query.message.reply_text("عذراً، حدث خطأ في معالجة بيانات الزر. الرجاء المحاولة مرة أخرى.")
         return ConversationHandler.END
@@ -630,7 +626,9 @@ def main():
         entry_points=[
             MessageHandler(filters.TEXT & ~filters.COMMAND, receive_order),
             # تم تعديل pattern هنا ليلتقط الـ callback_data الخاصة بأزرار المنتجات
-            CallbackQueryHandler(product_selected, pattern=r"^product_select_.*") 
+            # بما أننا أرجعنا الـ callback_data إلى الشكل البسيط "order_id|product"
+            # يجب أن يكون الـ pattern عاماً ليلتقط أي callback_query تبدأ بها المحادثة
+            CallbackQueryHandler(product_selected, pattern=r"^[0-9a-fA-F]{8}\|.*") # يلتقط الـ order_id (8 أحرف/أرقام) ثم | ثم أي شيء
         ],
         states={
             ASK_BUY: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_buy_price)],
