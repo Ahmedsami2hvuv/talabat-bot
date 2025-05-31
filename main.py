@@ -200,7 +200,11 @@ async def process_order(update, context, message, edited=False):
         
         # تحديث العنوان والمنتجات للطلبية الموجودة
         orders[order_id]["title"] = title
-        orders[order_id]["products"].extend([p for p in added_products if p not in orders[order_id]["products"]])
+        
+        # إضافة المنتجات الجديدة فقط (تجنب التكرار)
+        for p in added_products:
+            if p not in orders[order_id]["products"]:
+                orders[order_id]["products"].append(p)
         
         # تهيئة التسعير للمنتجات المضافة حديثاً
         for p in added_products:
@@ -368,11 +372,21 @@ async def receive_sell_price(update: Update, context: ContextTypes.DEFAULT_TYPE)
         keyboard = [buttons[i:i + 5] for i in range(0, len(buttons), 5)]
         reply_markup = InlineKeyboardMarkup(keyboard)
 
+        # **** هنا التغيير: حذف رسالة الأزرار القديمة (المنتجات) قبل إرسال أزرار المحلات
+        if order_id in last_button_message:
+            try:
+                await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=last_button_message[order_id])
+                del last_button_message[order_id] # حذفها من الذاكرة أيضاً
+            except Exception as e:
+                print(f"DEBUG: Could not delete old button message {last_button_message.get(order_id, 'N/A')} before showing places buttons: {e}")
+                pass
+
         await update.message.reply_text("كل المنتجات تم تسعيرها. كم محل كلفتك الطلبية؟ (اختر من الأزرار أو اكتب الرقم)", reply_markup=reply_markup)
-        return ASK_PLACES
+        return ASK_PLACES # نستمر في المحادثة إلى ASK_PLACES
     else:
+        # **** هنا التغيير: إذا لم تكتمل جميع المنتجات، نعيد عرض أزرار المنتجات ولا ننهي المحادثة
         await show_buttons(update.effective_chat.id, context, user_id, order_id)
-        return ConversationHandler.END # إذا لم تكتمل جميع المنتجات، يتم إنهاء المحادثة والعودة للأزرار
+        return ASK_BUY # نرجع لحالة ASK_BUY لكي يبقى الـ ConversationHandler نشطاً لانتظار اختيار منتج جديد
 
 def calculate_extra(places):
     extra_fees = {
@@ -492,6 +506,7 @@ async def receive_place_count(update: Update, context: ContextTypes.DEFAULT_TYPE
     await message_to_edit.reply_text("نسخة الزبون:\n" + customer_text, parse_mode="Markdown")
 
     # رابط الواتساب (للفاتورة الأصلية)
+    # **** هنا التغيير: التأكد من إرسال final_owner_invoice_text
     encoded_owner_invoice = final_owner_invoice_text.replace(" ", "%20").replace("\n", "%0A").replace("*", "") # إزالة النجوم للمشاركة
     wa_link = f"https://wa.me/{OWNER_PHONE_NUMBER}?text={encoded_owner_invoice}"
     await message_to_edit.reply_text("دوس على هذا الرابط حتى ترسل الفاتورة *لي* على الواتساب:\n" + wa_link, parse_mode="Markdown")
@@ -627,9 +642,6 @@ def main():
     conv_handler = ConversationHandler(
         entry_points=[
             MessageHandler(filters.TEXT & ~filters.COMMAND, receive_order),
-            # تم تعديل pattern هنا ليلتقط الـ callback_data الخاصة بأزرار المنتجات
-            # بما أننا أرجعنا الـ callback_data إلى الشكل البسيط "order_id|product"
-            # يجب أن يكون الـ pattern عاماً ليلتقط أي callback_query تبدأ بها المحادثة
             CallbackQueryHandler(product_selected) # Removed pattern for generic catch and internal validation
         ],
         states={
