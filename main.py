@@ -37,7 +37,7 @@ invoice_numbers = {}
 daily_profit = 0.0
 last_button_message = {} 
 current_product = {} 
-# messages_to_delete = {} # <--- ما زلنا لم نقم بتضمين هذا المتغير أو وظيفته لحذف الرسائل بعد
+
 
 # تحميل البيانات عند بدء تشغيل البوت
 def load_data():
@@ -500,18 +500,25 @@ async def receive_place_count(update: Update, context: ContextTypes.DEFAULT_TYPE
     invoice_text_for_owner.append(f"السعر الكلي: {format_float(total_with_extra)}")
     
     final_owner_invoice_text = "\n".join(invoice_text_for_owner)
+    
+    # ENCODED ADMIN INVOICE FOR WHATSAPP
+    encoded_owner_invoice = final_owner_invoice_text.replace(" ", "%20").replace("\n", "%0A").replace("*", "")
+    whatsapp_owner_button_markup = InlineKeyboardMarkup([
+        [InlineKeyboardButton("إرسال فاتورة الإدارة للواتساب", url=f"https://wa.me/{OWNER_PHONE_NUMBER}?text={encoded_owner_invoice}")]
+    ])
 
-    # هذا هو الجزء الذي يرسل فاتورة الإدارة إلى الخاص (OWNER_ID)
+    # إرسال فاتورة الإدارة وزر الواتساب الخاص بها إلى الخاص بالمالك (OWNER_ID)
     try:
         await context.bot.send_message(
             chat_id=OWNER_ID, # <--- يتم الإرسال إلى ID المالك فقط
             text=f"**فاتورة طلبية (الإدارة):**\n{final_owner_invoice_text}",
-            parse_mode="Markdown"
+            parse_mode="Markdown",
+            reply_markup=whatsapp_owner_button_markup # <--- إرسال زر الواتساب الخاص بمالك هنا
         )
-        logger.info(f"Admin invoice sent to OWNER_ID: {OWNER_ID}")
+        logger.info(f"Admin invoice and WhatsApp button sent to OWNER_ID: {OWNER_ID}")
     except Exception as e:
         logger.error(f"Could not send admin invoice to OWNER_ID {OWNER_ID}: {e}")
-        # إذا لم يتمكن من إرسالها للمالك، يخبر المستخدم
+        # إذا لم يتمكن من إرسالها للمالك، يخبر المستخدم في المحادثة
         await message_to_send_from.reply_text("عذراً، لم أتمكن من إرسال فاتورة الإدارة إلى خاصك. يرجى التأكد من أنني أستطيع مراسلتك في الخاص (قد تحتاج إلى بدء محادثة معي أولاً).")
 
 
@@ -535,16 +542,16 @@ async def receive_place_count(update: Update, context: ContextTypes.DEFAULT_TYPE
         f"\nالمجموع الكلي: {format_float(total_with_extra)} (مع احتساب عدد المحلات)"
     )
     
+    # نسخة الزبون (ستظل في المحادثة العامة)
     await message_to_send_from.reply_text("نسخة الزبون (لإرسالها للعميل):\n" + customer_text, parse_mode="Markdown")
 
-    encoded_owner_invoice = final_owner_invoice_text.replace(" ", "%20").replace("\n", "%0A").replace("*", "")
     encoded_customer_invoice = customer_text.replace(" ", "%20").replace("\n", "%0A").replace("*", "")
 
-    whatsapp_buttons_markup = InlineKeyboardMarkup([
-        [InlineKeyboardButton("إرسال فاتورة الإدارة للواتساب", url=f"https://wa.me/{OWNER_PHONE_NUMBER}?text={encoded_owner_invoice}")],
+    # زر الواتساب الخاص بالزبون (سيبقى في المحادثة العامة)
+    whatsapp_customer_button_markup = InlineKeyboardMarkup([
         [InlineKeyboardButton("إرسال فاتورة الزبون للواتساب", url=f"https://wa.me/{OWNER_PHONE_NUMBER}?text={encoded_customer_invoice}")]
     ])
-    await message_to_send_from.reply_text("دوس على هذه الأزرار لإرسال الفواتير عبر الواتساب:", reply_markup=whatsapp_buttons_markup)
+    await message_to_send_from.reply_text("دوس على هذه الأزرار لإرسال فاتورة الزبون عبر الواتساب:", reply_markup=whatsapp_customer_button_markup)
     
     final_actions_keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("تعديل الطلب الأخير", callback_data=f"edit_last_order_{order_id}")],
@@ -650,85 +657,4 @@ async def show_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 total_products += 1
                 product_counter[p_name] += 1
                 
-                if p_name in pricing.get(order_id, {}) and "buy" in pricing[order_id].get(p_name, {}) and "sell" in pricing[order_id].get(p_name, {}):
-                    buy = pricing[order_id][p_name]["buy"]
-                    sell = pricing[order_id][p_name]["sell"]
-                    profit = sell - buy
-                    order_buy += buy
-                    order_sell += sell
-                    details.append(f"  - {p_name} | شراء: {format_float(buy)} | بيع: {format_float(sell)} | ربح: {format_float(profit)}")
-                else:
-                    details.append(f"  - {p_name} | (لم يتم تسعيره)")
-        else:
-            details.append(f"  (لا توجد منتجات محددة لهذا الطلب)")
-
-        total_buy_all_orders += order_buy
-        total_sell_all_orders += order_sell
-        details.append(f"  *ربح هذه الطلبية:* {format_float(order_sell - order_buy)}")
-
-    top_product_str = "لا يوجد"
-    if product_counter:
-        top_product_name, top_product_count = product_counter.most_common(1)[0]
-        top_product_str = f"{top_product_name} ({top_product_count} مرة)"
-
-    result = (
-        f"**--- تقرير عام عن الطلبات ---**\n"
-        f"**إجمالي عدد الطلبات المعالجة:** {total_orders}\n"
-        f"**إجمالي عدد المنتجات المباعة (في الطلبات المعالجة):** {total_products}\n"
-        f"**أكثر منتج تم طلبه:** {top_product_str}\n\n"
-        f"**مجموع الشراء الكلي (للطلبات المعالجة):** {format_float(total_buy_all_orders)}\n"
-        f"**مجموع البيع الكلي (للطلبات المعالجة):** {format_float(total_sell_all_orders)}\n"
-        f"**صافي الربح الكلي (للطلبات المعالجة):** {format_float(total_sell_all_orders - total_buy_all_orders)}\n"
-        f"**الربح التراكمي في البوت (منذ آخر تصفير):** {format_float(daily_profit)} دينار\n\n"
-        f"**--- تفاصيل الطلبات ---**\n" + "\n".join(details)
-    )
-    await update.message.reply_text(result, parse_mode="Markdown")
-
-
-def main():
-    app = ApplicationBuilder().token(TOKEN).build()
-
-    # إضافة الـ Handlers
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(filters.TEXT & filters.Regex("^الارباح$|^ارباح$"), show_profit))
-    app.add_handler(MessageHandler(filters.TEXT & filters.Regex("^صفر$|^تصفير$"), reset_all))
-    app.add_handler(CallbackQueryHandler(confirm_reset, pattern="^(confirm_reset|cancel_reset)$"))
-    app.add_handler(MessageHandler(filters.TEXT & filters.Regex("^التقارير$|^تقرير$|^تقارير$"), show_report))
-    app.add_handler(MessageHandler(filters.UpdateType.EDITED_MESSAGE, edited_message))
-
-    # إضافة الهاندلرات الجديدة لأزرار ما بعد اكتمال الطلب
-    app.add_handler(CallbackQueryHandler(edit_last_order, pattern="^edit_last_order_"))
-    app.add_handler(CallbackQueryHandler(start_new_order, pattern="^start_new_order$"))
-
-
-    # محادثة تجهيز الطلبات
-    conv_handler = ConversationHandler(
-        entry_points=[
-            MessageHandler(filters.TEXT & ~filters.COMMAND, receive_order),
-            CallbackQueryHandler(product_selected)
-        ],
-        states={
-            ASK_BUY: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, receive_buy_price),
-                CallbackQueryHandler(product_selected) 
-            ],
-            ASK_SELL: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, receive_sell_price),
-                CallbackQueryHandler(product_selected) 
-            ],
-            ASK_PLACES: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, receive_place_count),
-                CallbackQueryHandler(receive_place_count, pattern="^places_")
-            ],
-        },
-        fallbacks=[
-            CommandHandler("cancel", lambda u, c: ConversationHandler.END)
-        ]
-    )
-    app.add_handler(conv_handler)
-
-    logger.info("Bot is running...")
-    app.run_polling()
-
-if __name__ == "__main__":
-    main()
+                if p_name in pricing.get(order_id, {}) and "buy" in pricing[order_id].get(p_name, {}) and "sell" in pricing[order_id].get(p
