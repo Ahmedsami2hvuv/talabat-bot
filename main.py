@@ -388,7 +388,9 @@ async def receive_sell_price(update: Update, context: ContextTypes.DEFAULT_TYPE)
     else:
         # إذا لم تكتمل جميع المنتجات، نعيد عرض أزرار المنتجات ولا ننهي المحادثة
         await show_buttons(update.effective_chat.id, context, user_id, order_id)
-        return ASK_BUY # هذا هو التصحيح الذي يمنع انتهاء المحادثة مبكراً.
+        # **** هذا هو التغيير الجديد المهم: نرجع لحالة تسمح بالتعامل مع أزرار الكولباك
+        return ASK_BUY # أو ASK_SELL، كلاهما يعمل طالما أننا أضفنا CallbackQueryHandler لهما
+                      # العودة إلى ASK_BUY منطقية لأنها نقطة البداية لتسعير منتج جديد.
 
 def calculate_extra(places):
     extra_fees = {
@@ -644,14 +646,24 @@ def main():
     conv_handler = ConversationHandler(
         entry_points=[
             MessageHandler(filters.TEXT & ~filters.COMMAND, receive_order),
-            CallbackQueryHandler(product_selected) # Removed pattern for generic catch and internal validation
+            CallbackQueryHandler(product_selected) # هذا الهاندلر سيستقبل الـ CallbackQuery عندما تبدأ المحادثة أو بعد انتهائها
         ],
         states={
-            ASK_BUY: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_buy_price)],
-            ASK_SELL: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_sell_price)],
+            ASK_BUY: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, receive_buy_price),
+                # **** التغيير هنا: إضافة CallbackQueryHandler لنفس الحالة (ASK_BUY)
+                # هذا يسمح للمستخدم بالضغط على أزرار المنتجات حتى وهو في حالة انتظار سعر الشراء
+                CallbackQueryHandler(product_selected) 
+            ],
+            ASK_SELL: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, receive_sell_price),
+                # **** التغيير هنا: إضافة CallbackQueryHandler لنفس الحالة (ASK_SELL)
+                # هذا يسمح للمستخدم بالضغط على أزرار المنتجات حتى وهو في حالة انتظار سعر البيع
+                CallbackQueryHandler(product_selected) 
+            ],
             ASK_PLACES: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, receive_place_count), # للتعامل مع الإدخال اليدوي
-                CallbackQueryHandler(receive_place_count, pattern="^places_") # للتعامل مع الأزرار
+                CallbackQueryHandler(receive_place_count, pattern="^places_") # للتعامل مع أزرار عدد المحلات
             ],
         },
         fallbacks=[
