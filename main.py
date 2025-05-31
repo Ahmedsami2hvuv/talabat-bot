@@ -387,9 +387,18 @@ async def receive_sell_price(update: Update, context: ContextTypes.DEFAULT_TYPE)
     order = orders[order_id]
     all_priced = True
     for p in order["products"]:
-        if p not in pricing.get(order_id, {}) or "buy" not in pricing[order_id].get(p, {}) or "sell" not in pricing[order_id].get(p, {}):
-            all_priced = False
-            break
+        # السطر 660
+        if p in pricing.get(order_id, {}) and "buy" in pricing[order_id].get(p, {}) and "sell" in pricing[order_id].get(p, {}):
+            completed_products.append(p)
+        else:
+            pending_products.append(p)
+            break # <--- هنا الخطأ، break هذا يكسر الحلقة ويجعل all_priced True بشكل خاطئ
+
+    # التصحيح: يجب أن يكون الكود هكذا:
+    # for p in order["products"]:
+    #     if p not in pricing.get(order_id, {}) or "buy" not in pricing[order_id].get(p, {}) or "sell" not in pricing[order_id].get(p, {}):
+    #         all_priced = False
+    #         break
             
     if all_priced:
         context.user_data["completed_order_id"] = order_id
@@ -657,4 +666,85 @@ async def show_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 total_products += 1
                 product_counter[p_name] += 1
                 
-                if p_name in pricing.get(order_id, {}) and "buy" in pricing[order_id].get(p_name, {}) and "sell" in pricing[order_id].get(p
+                if p_name in pricing.get(order_id, {}) and "buy" in pricing[order_id].get(p_name, {}) and "sell" in pricing[order_id].get(p_name, {}):
+                    buy = pricing[order_id][p_name]["buy"]
+                    sell = pricing[order_id][p_name]["sell"]
+                    profit = sell - buy
+                    order_buy += buy
+                    order_sell += sell
+                    details.append(f"  - {p_name} | شراء: {format_float(buy)} | بيع: {format_float(sell)} | ربح: {format_float(profit)}")
+                else:
+                    details.append(f"  - {p_name} | (لم يتم تسعيره)")
+        else:
+            details.append(f"  (لا توجد منتجات محددة لهذا الطلب)")
+
+        total_buy_all_orders += order_buy
+        total_sell_all_orders += order_sell
+        details.append(f"  *ربح هذه الطلبية:* {format_float(order_sell - order_buy)}")
+
+    top_product_str = "لا يوجد"
+    if product_counter:
+        top_product_name, top_product_count = product_counter.most_common(1)[0]
+        top_product_str = f"{top_product_name} ({top_product_count} مرة)"
+
+    result = (
+        f"**--- تقرير عام عن الطلبات ---**\n"
+        f"**إجمالي عدد الطلبات المعالجة:** {total_orders}\n"
+        f"**إجمالي عدد المنتجات المباعة (في الطلبات المعالجة):** {total_products}\n"
+        f"**أكثر منتج تم طلبه:** {top_product_str}\n\n"
+        f"**مجموع الشراء الكلي (للطلبات المعالجة):** {format_float(total_buy_all_orders)}\n"
+        f"**مجموع البيع الكلي (للطلبات المعالجة):** {format_float(total_sell_all_orders)}\n"
+        f"**صافي الربح الكلي (للطلبات المعالجة):** {format_float(total_sell_all_orders - total_buy_all_orders)}\n"
+        f"**الربح التراكمي في البوت (منذ آخر تصفير):** {format_float(daily_profit)} دينار\n\n"
+        f"**--- تفاصيل الطلبات ---**\n" + "\n".join(details)
+    )
+    await update.message.reply_text(result, parse_mode="Markdown")
+
+
+def main():
+    app = ApplicationBuilder().token(TOKEN).build()
+
+    # إضافة الـ Handlers
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(MessageHandler(filters.TEXT & filters.Regex("^الارباح$|^ارباح$"), show_profit))
+    app.add_handler(MessageHandler(filters.TEXT & filters.Regex("^صفر$|^تصفير$"), reset_all))
+    app.add_handler(CallbackQueryHandler(confirm_reset, pattern="^(confirm_reset|cancel_reset)$"))
+    app.add_handler(MessageHandler(filters.TEXT & filters.Regex("^التقارير$|^تقرير$|^تقارير$"), show_report))
+    app.add_handler(MessageHandler(filters.UpdateType.EDITED_MESSAGE, edited_message))
+
+    # إضافة الهاندلرات الجديدة لأزرار ما بعد اكتمال الطلب
+    app.add_handler(CallbackQueryHandler(edit_last_order, pattern="^edit_last_order_"))
+    app.add_handler(CallbackQueryHandler(start_new_order, pattern="^start_new_order$"))
+
+
+    # محادثة تجهيز الطلبات
+    conv_handler = ConversationHandler(
+        entry_points=[
+            MessageHandler(filters.TEXT & ~filters.COMMAND, receive_order),
+            CallbackQueryHandler(product_selected)
+        ],
+        states={
+            ASK_BUY: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, receive_buy_price),
+                CallbackQueryHandler(product_selected) 
+            ],
+            ASK_SELL: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, receive_sell_price),
+                CallbackQueryHandler(product_selected) 
+            ],
+            ASK_PLACES: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, receive_place_count),
+                CallbackQueryHandler(receive_place_count, pattern="^places_")
+            ],
+        },
+        fallbacks=[
+            CommandHandler("cancel", lambda u, c: ConversationHandler.END)
+        ]
+    )
+    app.add_handler(conv_handler)
+
+    logger.info("Bot is running...")
+    app.run_polling()
+
+if __name__ == "__main__":
+    main()
