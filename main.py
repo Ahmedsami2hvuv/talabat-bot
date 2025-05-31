@@ -39,7 +39,7 @@ invoice_numbers = {}
 daily_profit = 0.0
 last_button_message = {}
 current_product = {}
-messages_to_delete = {} # <--- هذا هو التصحيح الرئيسي الذي يحل مشكلة SyntaxError
+messages_to_delete = {}
 
 
 # تحميل البيانات عند بدء تشغيل البوت
@@ -387,7 +387,7 @@ async def product_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def receive_buy_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.message.from_user.id)
-    # تم إزالة إضافة رسالة المستخدم للحذف هنا
+    # تم إزالة إضافة رسالة المستخدم للحذف هنا (هذا التغيير للحفاظ على رسائل المجهز)
     # add_message_to_delete_queue(update.message.chat_id, update.message.message_id) 
     
     data = current_product.get(user_id)
@@ -423,7 +423,7 @@ async def receive_buy_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def receive_sell_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.message.from_user.id)
-    # تم إزالة إضافة رسالة المستخدم للحذف هنا
+    # تم إزالة إضافة رسالة المستخدم للحذف هنا (هذا التغيير للحفاظ على رسائل المجهز)
     # add_message_to_delete_queue(update.message.chat_id, update.message.message_id) 
     
     data = current_product.get(user_id)
@@ -532,7 +532,7 @@ async def receive_place_count(update: Update, context: ContextTypes.DEFAULT_TYPE
             add_message_to_delete_queue(msg.chat_id, msg.message_id) # حفظ رسالة البوت للحذف
             return ConversationHandler.END
     elif update.message:
-        # تم إزالة إضافة رسالة المستخدم للحذف هنا
+        # تم إزالة إضافة رسالة المستخدم للحذف هنا (هذا التغيير للحفاظ على رسائل المجهز)
         # add_message_to_delete_queue(update.message.chat_id, update.message.message_id) 
         message_to_send_from = update.message
         try:
@@ -641,7 +641,8 @@ async def receive_place_count(update: Update, context: ContextTypes.DEFAULT_TYPE
     add_message_to_delete_queue(msg.chat_id, msg.message_id) # حفظ رسالة البوت للحذف
     
     final_actions_keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("تعديل الطلب الأخير", callback_data=f"edit_last_order_{order_id})"],
+        # هذا هو السطر 644 الذي يحتوي على الخطأ
+        [InlineKeyboardButton("تعديل الطلب الأخير", callback_data=f"edit_last_order_{order_id}")], # <--- تم تصحيح القوس هنا
         [InlineKeyboardButton("إنشاء طلب جديد", callback_data="start_new_order")]
     ])
     msg = await message_to_send_from.reply_text("شنو تريد تسوي هسه؟", reply_markup=final_actions_keyboard)
@@ -702,7 +703,7 @@ async def start_new_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def show_profit(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # تم إزالة إضافة رسالة المستخدم للحذف هنا
+    # تم إزالة إضافة رسالة المستخدم للحذف هنا (هذا التغيير للحفاظ على رسائل المجهز)
     # add_message_to_delete_queue(update.message.chat_id, update.message.message_id) 
 
     if str(update.message.from_user.id) != str(OWNER_ID):
@@ -714,7 +715,7 @@ async def show_profit(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def reset_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # تم إزالة إضافة رسالة المستخدم للحذف هنا
+    # تم إزالة إضافة رسالة المستخدم للحذف هنا (هذا التغيير للحفاظ على رسائل المجهز)
     # add_message_to_delete_queue(update.message.chat_id, update.message.message_id) 
     if str(update.message.from_user.id) != str(OWNER_ID):
         msg = await update.message.reply_text("عذراً، هذا الأمر متاح للمالك فقط.")
@@ -771,7 +772,7 @@ async def confirm_reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def show_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # تم إزالة إضافة رسالة المستخدم للحذف هنا
+    # تم إزالة إضافة رسالة المستخدم للحذف هنا (هذا التغيير للحفاظ على رسائل المجهز)
     # add_message_to_delete_queue(update.message.chat_id, update.message.message_id) 
 
     if str(update.message.from_user.id) != str(OWNER_ID):
