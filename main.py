@@ -98,10 +98,6 @@ if OWNER_ID is None:
 
 # دالة لتنسيق الأرقام العشرية
 def format_float(value):
-    # استخدام f-string مع .2f لتحديد فاصلتين عشريتين، ثم إزالة الأصفار الزائدة
-    # لكن حسب طلبك السابق "لا تضيف اصفار زياده"، راح نستخدم format(value, 'g')
-    # اللي راح يعطيك الرقم بدون أصفار زائدة لو كان صحيح، ومع عدد مناسب من الفواصل لو كان عشري.
-    # وبعدين ممكن نشيل الـ .0 لو كانت القيمة عدد صحيح
     formatted = f"{value:g}"
     if formatted.endswith(".0"):
         return formatted[:-2]
@@ -191,7 +187,8 @@ async def show_buttons(chat_id, context, user_id, order_id):
         # التحقق مما إذا كان المنتج قد تم تسعيره بالكامل
         is_done = p in pricing[order_id] and 'buy' in pricing[order_id][p] and 'sell' in pricing[order_id][p]
         label = f"✅ {p}" if is_done else p
-        buttons.append([InlineKeyboardButton(label, callback_data=f"{order_id}|{p}")])
+        # هنا تم تعديل الـ callback_data لإضافة "product_select_" في البداية
+        buttons.append([InlineKeyboardButton(label, callback_data=f"product_select_{order_id}|{p}")]) 
     
     markup = InlineKeyboardMarkup(buttons)
     
@@ -208,13 +205,19 @@ async def show_buttons(chat_id, context, user_id, order_id):
 
 async def product_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
+    print(f"DEBUG: Callback query received: {query.data}") # رسالة للـ Logs
     await query.answer() # يجب الإجابة على الكولباك كويري
 
-    order_id, product = query.data.split("|", 1)
+    # تم تعديل طريقة تقسيم الـ callback_data
+    # البحث عن أول | بعد "product_select_"
+    data_parts = query.data.split("_", 1)[1] # إزالة "product_select_"
+    order_id, product = data_parts.split("|", 1) 
+    
     user_id = str(query.from_user.id) # تحويل الـ ID إلى string
 
     # التحقق من أن الطلب والمنتج لا يزالان موجودين
     if order_id not in orders or product not in orders[order_id]["products"]:
+        print(f"DEBUG: Order or product not found for {order_id}|{product}") # رسالة للـ Logs
         await query.message.reply_text("عذراً، الطلب أو المنتج غير موجود. الرجاء بدء طلبية جديدة أو التحقق من المنتجات.")
         return ConversationHandler.END
     
@@ -315,6 +318,7 @@ async def receive_place_count(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     if update.callback_query:
         query = update.callback_query
+        print(f"DEBUG: Places callback query received: {query.data}") # رسالة للـ Logs
         await query.answer()
         if query.data.startswith("places_"):
             places = int(query.data.split("_")[1])
@@ -396,9 +400,6 @@ async def receive_place_count(update: Update, context: ContextTypes.DEFAULT_TYPE
             customer_lines.append(f"{p} - (لم يتم تسعيره)")
     
     # سطر كلفة التجهيز للمحلات
-    # التأكد من عدم تكرار إضافة الـ extra إذا كان قد تم حسابه في running_total مسبقاً
-    # تم إزالة إضافة extra من running_total لتجنب تكرار احتسابها في هذا السطر.
-    # مجموع الزبون سيظهر هنا بالصورة الصحيحة.
     customer_lines.append(f"كلفة تجهيز من - {places} محلات {format_float(extra)} = {format_float(total_with_extra)}")
     
     customer_text = (
@@ -412,9 +413,6 @@ async def receive_place_count(update: Update, context: ContextTypes.DEFAULT_TYPE
     await message_to_edit.reply_text("نسخة الزبون:\n" + customer_text, parse_mode="Markdown")
 
     # رابط الواتساب (للفاتورة الأصلية)
-    # تعديل الرابط ليذهب إلى رقمك مباشرة
-    # وتضمين الفاتورة الأصلية وليس نسخة الزبون
-    # وتنسيق النص ليكون مناسب لرابط الواتساب
     encoded_owner_invoice = final_owner_invoice_text.replace(" ", "%20").replace("\n", "%0A").replace("*", "") # إزالة النجوم للمشاركة
     wa_link = f"https://wa.me/{OWNER_PHONE_NUMBER}?text={encoded_owner_invoice}"
     await message_to_edit.reply_text("دوس على هذا الرابط حتى ترسل الفاتورة *لي* على الواتساب:\n" + wa_link, parse_mode="Markdown")
@@ -537,7 +535,8 @@ def main():
     conv_handler = ConversationHandler(
         entry_points=[
             MessageHandler(filters.TEXT & ~filters.COMMAND, receive_order),
-            CallbackQueryHandler(product_selected)
+            # تم تعديل pattern هنا ليلتقط الـ callback_data الخاصة بأزرار المنتجات
+            CallbackQueryHandler(product_selected, pattern="^product_select_") 
         ],
         states={
             ASK_BUY: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_buy_price)],
@@ -558,4 +557,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
