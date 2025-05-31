@@ -28,58 +28,68 @@ COUNTER_FILE = os.path.join(DATA_DIR, "invoice_counter.txt")
 # ملف لحفظ IDs رسائل الأزرار لكي لا يتم حذفها عند إعادة التشغيل
 LAST_BUTTON_MESSAGE_FILE = os.path.join(DATA_DIR, "last_button_message.json")
 
+# ملاحظة: ملف MESSAGES_TO_DELETE_FILE لم يتم إضافته بعد لإزالة ميزة الحذف التلقائي مؤقتاً
+
+# تهيئة المتغيرات العامة في النطاق العلوي لضمان وجودها
+orders = {}
+pricing = {}
+invoice_numbers = {}
+daily_profit = 0.0
+last_button_message = {} 
+current_product = {} 
+# messages_to_delete = {} # <--- تم إزالة هذا المتغير مؤقتاً حتى نرى سبب المشكلة
 
 # تحميل البيانات عند بدء تشغيل البوت
 def load_data():
-    global orders, pricing, invoice_numbers, daily_profit, last_button_message, current_product
-
-    orders = {}
-    pricing = {}
-    invoice_numbers = {}
-    daily_profit = 0.0
-    last_button_message = {} # هذا ما راح ينحفظ، لأنه يتعلق بحالة الرسائل في الوقت الحالي
-    current_product = {} # تم تهيئته هنا لضمان وجوده دائماً
+    global orders, pricing, invoice_numbers, daily_profit, last_button_message, current_product # , messages_to_delete # تم إزالته من هنا أيضاً
 
     os.makedirs(DATA_DIR, exist_ok=True)
 
+    # تم تعديل طريقة التحميل لاستخدام .clear() و .update() للحفاظ على المراجع
     if os.path.exists(ORDERS_FILE):
         with open(ORDERS_FILE, "r") as f:
             try:
-                orders = json.load(f)
+                temp_data = json.load(f)
+                orders.clear() 
+                orders.update(temp_data) 
                 orders = {str(k): v for k, v in orders.items()}
             except json.JSONDecodeError:
-                orders = {}
+                orders.clear() 
                 logger.warning("orders.json is corrupted or empty, reinitializing.")
             except Exception as e:
                 logger.error(f"Error loading orders.json: {e}, reinitializing.")
-                orders = {}
+                orders.clear()
 
     if os.path.exists(PRICING_FILE):
         with open(PRICING_FILE, "r") as f:
             try:
-                pricing = json.load(f)
+                temp_data = json.load(f)
+                pricing.clear()
+                pricing.update(temp_data)
                 pricing = {str(k): v for k, v in pricing.items()}
                 for oid in pricing:
                     if isinstance(pricing[oid], dict):
                         pricing[oid] = {str(pk): pv for pk, pv in pricing[oid].items()}
             except json.JSONDecodeError:
-                pricing = {}
+                pricing.clear()
                 logger.warning("pricing.json is corrupted or empty, reinitializing.")
             except Exception as e:
                 logger.error(f"Error loading pricing.json: {e}, reinitializing.")
-                pricing = {}
+                pricing.clear()
 
     if os.path.exists(INVOICE_NUMBERS_FILE):
         with open(INVOICE_NUMBERS_FILE, "r") as f:
             try:
-                invoice_numbers = json.load(f)
+                temp_data = json.load(f)
+                invoice_numbers.clear()
+                invoice_numbers.update(temp_data)
                 invoice_numbers = {str(k): v for k, v in invoice_numbers.items()}
             except json.JSONDecodeError:
-                invoice_numbers = {}
+                invoice_numbers.clear()
                 logger.warning("invoice_numbers.json is corrupted or empty, reinitializing.")
             except Exception as e:
                 logger.error(f"Error loading invoice_numbers.json: {e}, reinitializing.")
-                invoice_numbers = {}
+                invoice_numbers.clear()
 
     if os.path.exists(DAILY_PROFIT_FILE):
         with open(DAILY_PROFIT_FILE, "r") as f:
@@ -96,14 +106,31 @@ def load_data():
     if os.path.exists(LAST_BUTTON_MESSAGE_FILE):
         with open(LAST_BUTTON_MESSAGE_FILE, "r") as f:
             try:
-                last_button_message = json.load(f)
+                temp_data = json.load(f)
+                last_button_message.clear()
+                last_button_message.update(temp_data)
                 last_button_message = {str(k): v for k, v in last_button_message.items()}
             except json.JSONDecodeError:
-                last_button_message = {}
+                last_button_message.clear()
                 logger.warning("last_button_message.json is corrupted or empty, reinitializing.")
             except Exception as e:
                 logger.error(f"Error loading last_button_message.json: {e}, reinitializing.")
-                last_button_message = {}
+                last_button_message.clear()
+
+    # ملف MESSAGES_TO_DELETE_FILE لم يعد يتم التعامل معه هنا
+    # if os.path.exists(MESSAGES_TO_DELETE_FILE):
+    #     with open(MESSAGES_TO_DELETE_FILE, "r") as f:
+    #         try:
+    #             temp_data = json.load(f)
+    #             messages_to_delete.clear() 
+    #             messages_to_delete.update(temp_data) 
+    #             messages_to_delete = {str(k): v for k, v in messages_to_delete.items()}
+    #         except json.JSONDecodeError:
+    #             messages_to_delete.clear() 
+    #             logger.warning("messages_to_delete.json is corrupted or empty, reinitializing.")
+    #         except Exception as e:
+    #             logger.error(f"Error loading messages_to_delete.json: {e}, reinitializing.")
+    #             messages_to_delete.clear()
 
 # حفظ البيانات
 def save_data():
@@ -119,6 +146,9 @@ def save_data():
     # حفظ IDs رسائل الأزرار
     with open(LAST_BUTTON_MESSAGE_FILE, "w") as f:
         json.dump(last_button_message, f)
+    # ملف MESSAGES_TO_DELETE_FILE لم يعد يتم التعامل معه هنا
+    # with open(MESSAGES_TO_DELETE_FILE, "w") as f:
+    #     json.dump(messages_to_delete, f)
 
 # تهيئة ملف عداد الفواتير
 os.makedirs(DATA_DIR, exist_ok=True)
@@ -278,9 +308,7 @@ async def show_buttons(chat_id, context, user_id, order_id, is_final_buttons=Fal
         try:
             # **** ثم حذف الرسالة القديمة
             await context.bot.delete_message(chat_id=chat_id, message_id=msg_info["message_id"])
-            logger.info(f"Deleted old button message {msg_info['message_id']} for order {order_id}")
-        except Exception as e:
-            logger.warning(f"Could not delete old button message {msg_info.get('message_id', 'N/A')} for order {order_id}: {e}. It might have been deleted already or is inaccessible.")
+            logger.info(f"Deleted old button message {msg_info.get('message_id', 'N/A')} for order {order_id}: {e}. It might have been deleted already or is inaccessible.")
             pass # تجاهل الخطأ إذا الرسالة لم تعد موجودة أو لا يمكن حذفها
         finally:
             # إزالة الإشارة للرسالة القديمة من الذاكرة والملف
@@ -491,6 +519,7 @@ async def receive_place_count(update: Update, context: ContextTypes.DEFAULT_TYPE
     
     final_owner_invoice_text = "\n".join(invoice_text_for_owner)
 
+    # هذا الجزء سيتم إرساله في المحادثة العامة (نسخة الإدارة)
     await message_to_send_from.reply_text(
         f"**الفاتورة النهائية (لك):**\n{final_owner_invoice_text}",
         parse_mode="Markdown"
@@ -713,3 +742,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
