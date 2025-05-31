@@ -30,22 +30,35 @@ def load_data():
         with open(ORDERS_FILE, "r") as f:
             try:
                 orders = json.load(f)
+                # تحويل مفاتيح orders و pricing و invoice_numbers إلى str إذا كانت integers
+                # لأن JSON قد يحولها إلى int إذا كانت أرقام
+                orders = {str(k): v for k, v in orders.items()}
+                for oid in orders:
+                    if oid in pricing:
+                        pricing[oid] = {str(pk): pv for pk, pv in pricing[oid].items()}
             except json.JSONDecodeError:
                 orders = {}
+                print("DEBUG: orders.json is corrupted or empty, reinitializing.")
 
     if os.path.exists(PRICING_FILE):
         with open(PRICING_FILE, "r") as f:
             try:
                 pricing = json.load(f)
+                pricing = {str(k): v for k, v in pricing.items()}
+                for oid in pricing:
+                    pricing[oid] = {str(pk): pv for pk, pv in pricing[oid].items()}
             except json.JSONDecodeError:
                 pricing = {}
+                print("DEBUG: pricing.json is corrupted or empty, reinitializing.")
 
     if os.path.exists(INVOICE_NUMBERS_FILE):
         with open(INVOICE_NUMBERS_FILE, "r") as f:
             try:
                 invoice_numbers = json.load(f)
+                invoice_numbers = {str(k): v for k, v in invoice_numbers.items()}
             except json.JSONDecodeError:
                 invoice_numbers = {}
+                print("DEBUG: invoice_numbers.json is corrupted or empty, reinitializing.")
 
     if os.path.exists(DAILY_PROFIT_FILE):
         with open(DAILY_PROFIT_FILE, "r") as f:
@@ -53,6 +66,7 @@ def load_data():
                 daily_profit = json.load(f)
             except json.JSONDecodeError:
                 daily_profit = 0.0
+                print("DEBUG: daily_profit.json is corrupted or empty, reinitializing.")
 
 # حفظ البيانات
 def save_data():
@@ -134,6 +148,7 @@ async def process_order(update, context, message, edited=False):
     existing_order_id = None
     # البحث عن طلبية موجودة لنفس المستخدم ونفس العنوان
     for oid, order in orders.items():
+        # هنا نتأكد أن user_id المخزن هو str
         if order["user_id"] == user_id and order["title"] == title:
             existing_order_id = oid
             break
@@ -208,16 +223,22 @@ async def product_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     print(f"DEBUG: Callback query received: {query.data}") # رسالة للـ Logs
     await query.answer() # يجب الإجابة على الكولباك كويري
 
-    # تم تعديل طريقة تقسيم الـ callback_data
-    # البحث عن أول | بعد "product_select_"
-    data_parts = query.data.split("_", 1)[1] # إزالة "product_select_"
-    order_id, product = data_parts.split("|", 1) 
+    try:
+        # تم تعديل طريقة تقسيم الـ callback_data
+        # البحث عن أول | بعد "product_select_"
+        data_parts = query.data.split("_", 1)[1] # إزالة "product_select_"
+        order_id, product = data_parts.split("|", 1) 
+    except IndexError as e:
+        print(f"ERROR: Failed to parse callback_data: {query.data}. Error: {e}")
+        await query.message.reply_text("عذراً، حدث خطأ في معالجة بيانات الزر. الرجاء المحاولة مرة أخرى.")
+        return ConversationHandler.END
     
     user_id = str(query.from_user.id) # تحويل الـ ID إلى string
 
     # التحقق من أن الطلب والمنتج لا يزالان موجودين
-    if order_id not in orders or product not in orders[order_id]["products"]:
-        print(f"DEBUG: Order or product not found for {order_id}|{product}") # رسالة للـ Logs
+    # تأكد من أن order_id موجود في orders قبل الوصول إلى [order_id]
+    if order_id not in orders or product not in orders[order_id].get("products", []): # استخدام .get للحماية
+        print(f"DEBUG: Order ID '{order_id}' not found in orders or product '{product}' not in products of '{order_id}'. Current orders keys: {list(orders.keys())}") # رسالة للـ Logs
         await query.message.reply_text("عذراً، الطلب أو المنتج غير موجود. الرجاء بدء طلبية جديدة أو التحقق من المنتجات.")
         return ConversationHandler.END
     
@@ -536,7 +557,7 @@ def main():
         entry_points=[
             MessageHandler(filters.TEXT & ~filters.COMMAND, receive_order),
             # تم تعديل pattern هنا ليلتقط الـ callback_data الخاصة بأزرار المنتجات
-            CallbackQueryHandler(product_selected, pattern="^product_select_") 
+            CallbackQueryHandler(product_selected, pattern=r"^product_select_.*") 
         ],
         states={
             ASK_BUY: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_buy_price)],
