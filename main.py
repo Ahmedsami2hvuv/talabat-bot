@@ -499,7 +499,7 @@ async def receive_place_count(update: Update, context: ContextTypes.DEFAULT_TYPE
     
     final_owner_invoice_text = "\n".join(invoice_text_for_owner)
 
-    # هذا الجزء سيتم إرساله إلى الخاص بالمالك (OWNER_ID)
+    # إرسال فاتورة الإدارة إلى الخاص بالمالك (فقط للمالك)
     try:
         await context.bot.send_message(
             chat_id=OWNER_ID, # <--- يتم الإرسال إلى ID المالك فقط
@@ -533,17 +533,34 @@ async def receive_place_count(update: Update, context: ContextTypes.DEFAULT_TYPE
         f"\nالمجموع الكلي: {format_float(total_with_extra)} (مع احتساب عدد المحلات)"
     )
     
+    # هذه هي الرسالة التي تحتوي على نسخة الزبون. سنقوم بتعديل الأزرار هنا.
     await message_to_send_from.reply_text("نسخة الزبون (لإرسالها للعميل):\n" + customer_text, parse_mode="Markdown")
 
+    # أزرار الواتساب (لنسخة الإدارة والزبون)
     encoded_owner_invoice = final_owner_invoice_text.replace(" ", "%20").replace("\n", "%0A").replace("*", "")
     encoded_customer_invoice = customer_text.replace(" ", "%20").replace("\n", "%0A").replace("*", "")
 
-    whatsapp_buttons_markup = InlineKeyboardMarkup([
+    # إنشاء الأزرار التي ستظهر في المحادثة العامة (فقط زر الزبون)
+    whatsapp_buttons_for_group_chat = InlineKeyboardMarkup([
+        [InlineKeyboardButton("إرسال فاتورة الزبون للواتساب", url=f"https://wa.me/{OWNER_PHONE_NUMBER}?text={encoded_customer_invoice}")]
+    ])
+    await message_to_send_from.reply_text("دوس على هذه الأزرار لإرسال الفواتير عبر الواتساب:", reply_markup=whatsapp_buttons_for_group_chat)
+    
+    # إرسال أزرار الواتساب لنسخة الإدارة إلى الخاص بالمالك أيضاً
+    whatsapp_buttons_for_owner_private = InlineKeyboardMarkup([
         [InlineKeyboardButton("إرسال فاتورة الإدارة للواتساب", url=f"https://wa.me/{OWNER_PHONE_NUMBER}?text={encoded_owner_invoice}")],
         [InlineKeyboardButton("إرسال فاتورة الزبون للواتساب", url=f"https://wa.me/{OWNER_PHONE_NUMBER}?text={encoded_customer_invoice}")]
     ])
-    await message_to_send_from.reply_text("دوس على هذه الأزرار لإرسال الفواتير عبر الواتساب:", reply_markup=whatsapp_buttons_markup)
-    
+    try:
+        await context.bot.send_message(
+            chat_id=OWNER_ID,
+            text="روابط واتساب سريعة:",
+            reply_markup=whatsapp_buttons_for_owner_private
+        )
+    except Exception as e:
+        logger.error(f"Could not send WhatsApp buttons to OWNER_ID {OWNER_ID}: {e}")
+
+
     final_actions_keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("تعديل الطلب الأخير", callback_data=f"edit_last_order_{order_id}")],
         [InlineKeyboardButton("إنشاء طلب جديد", callback_data="start_new_order")]
