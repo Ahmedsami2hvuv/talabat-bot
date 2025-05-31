@@ -7,9 +7,16 @@ import uuid
 import os
 from collections import Counter
 import json
+import logging
+
+# تفعيل الـ logging للحصول على تفاصيل الأخطاء والعمليات
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO
+)
+logger = logging.getLogger(__name__)
+
 
 # المسار الثابت لحفظ البيانات داخل وحدة التخزين (Volume)
-# تأكد أن هذا المسار مطابق للمسار الذي تم تحديده في Railway (غالباً /mnt/data/)
 DATA_DIR = "/mnt/data/"
 
 # أسماء ملفات حفظ البيانات، الآن ستُحفظ داخل مجلد DATA_DIR
@@ -18,12 +25,14 @@ PRICING_FILE = os.path.join(DATA_DIR, "pricing.json")
 INVOICE_NUMBERS_FILE = os.path.join(DATA_DIR, "invoice_numbers.json")
 DAILY_PROFIT_FILE = os.path.join(DATA_DIR, "daily_profit.json")
 COUNTER_FILE = os.path.join(DATA_DIR, "invoice_counter.txt")
+# ملف لحفظ IDs رسائل الأزرار لكي لا يتم حذفها عند إعادة التشغيل
+LAST_BUTTON_MESSAGE_FILE = os.path.join(DATA_DIR, "last_button_message.json")
+
 
 # تحميل البيانات عند بدء تشغيل البوت
 def load_data():
-    global orders, pricing, invoice_numbers, daily_profit, last_button_message, current_product # أضف current_product هنا
+    global orders, pricing, invoice_numbers, daily_profit, last_button_message, current_product
 
-    # تهيئة المتغيرات
     orders = {}
     pricing = {}
     invoice_numbers = {}
@@ -31,21 +40,18 @@ def load_data():
     last_button_message = {} # هذا ما راح ينحفظ، لأنه يتعلق بحالة الرسائل في الوقت الحالي
     current_product = {} # تم تهيئته هنا لضمان وجوده دائماً
 
-    # تأكد من وجود مجلد البيانات قبل محاولة القراءة أو الكتابة
     os.makedirs(DATA_DIR, exist_ok=True)
 
     if os.path.exists(ORDERS_FILE):
         with open(ORDERS_FILE, "r") as f:
             try:
                 orders = json.load(f)
-                # تحويل مفاتيح orders و pricing و invoice_numbers إلى str إذا كانت integers
-                # لضمان التوافقية مع الـ UUIDs (str)
                 orders = {str(k): v for k, v in orders.items()}
             except json.JSONDecodeError:
                 orders = {}
-                print("DEBUG: orders.json is corrupted or empty, reinitializing.")
+                logger.warning("orders.json is corrupted or empty, reinitializing.")
             except Exception as e:
-                print(f"DEBUG: Error loading orders.json: {e}, reinitializing.")
+                logger.error(f"Error loading orders.json: {e}, reinitializing.")
                 orders = {}
 
     if os.path.exists(PRICING_FILE):
@@ -53,14 +59,14 @@ def load_data():
             try:
                 pricing = json.load(f)
                 pricing = {str(k): v for k, v in pricing.items()}
-                for oid in pricing: # تأكد من أن مفاتيح المنتجات داخل pricing هي str أيضاً
+                for oid in pricing:
                     if isinstance(pricing[oid], dict):
                         pricing[oid] = {str(pk): pv for pk, pv in pricing[oid].items()}
             except json.JSONDecodeError:
                 pricing = {}
-                print("DEBUG: pricing.json is corrupted or empty, reinitializing.")
+                logger.warning("pricing.json is corrupted or empty, reinitializing.")
             except Exception as e:
-                print(f"DEBUG: Error loading pricing.json: {e}, reinitializing.")
+                logger.error(f"Error loading pricing.json: {e}, reinitializing.")
                 pricing = {}
 
     if os.path.exists(INVOICE_NUMBERS_FILE):
@@ -70,9 +76,9 @@ def load_data():
                 invoice_numbers = {str(k): v for k, v in invoice_numbers.items()}
             except json.JSONDecodeError:
                 invoice_numbers = {}
-                print("DEBUG: invoice_numbers.json is corrupted or empty, reinitializing.")
+                logger.warning("invoice_numbers.json is corrupted or empty, reinitializing.")
             except Exception as e:
-                print(f"DEBUG: Error loading invoice_numbers.json: {e}, reinitializing.")
+                logger.error(f"Error loading invoice_numbers.json: {e}, reinitializing.")
                 invoice_numbers = {}
 
     if os.path.exists(DAILY_PROFIT_FILE):
@@ -81,14 +87,26 @@ def load_data():
                 daily_profit = json.load(f)
             except json.JSONDecodeError:
                 daily_profit = 0.0
-                print("DEBUG: daily_profit.json is corrupted or empty, reinitializing.")
+                logger.warning("daily_profit.json is corrupted or empty, reinitializing.")
             except Exception as e:
-                print(f"DEBUG: Error loading daily_profit.json: {e}, reinitializing.")
+                logger.error(f"Error loading daily_profit.json: {e}, reinitializing.")
                 daily_profit = 0.0
+    
+    # تحميل آخر رسائل الأزرار
+    if os.path.exists(LAST_BUTTON_MESSAGE_FILE):
+        with open(LAST_BUTTON_MESSAGE_FILE, "r") as f:
+            try:
+                last_button_message = json.load(f)
+                last_button_message = {str(k): v for k, v in last_button_message.items()}
+            except json.JSONDecodeError:
+                last_button_message = {}
+                logger.warning("last_button_message.json is corrupted or empty, reinitializing.")
+            except Exception as e:
+                logger.error(f"Error loading last_button_message.json: {e}, reinitializing.")
+                last_button_message = {}
 
 # حفظ البيانات
 def save_data():
-    # تأكد من وجود مجلد البيانات قبل محاولة الكتابة
     os.makedirs(DATA_DIR, exist_ok=True)
     with open(ORDERS_FILE, "w") as f:
         json.dump(orders, f)
@@ -98,9 +116,11 @@ def save_data():
         json.dump(invoice_numbers, f)
     with open(DAILY_PROFIT_FILE, "w") as f:
         json.dump(daily_profit, f)
+    # حفظ IDs رسائل الأزرار
+    with open(LAST_BUTTON_MESSAGE_FILE, "w") as f:
+        json.dump(last_button_message, f)
 
 # تهيئة ملف عداد الفواتير
-# تأكد من وجود مجلد البيانات قبل محاولة القراءة أو الكتابة
 os.makedirs(DATA_DIR, exist_ok=True)
 if not os.path.exists(COUNTER_FILE):
     with open(COUNTER_FILE, "w") as f:
@@ -121,11 +141,9 @@ ASK_BUY, ASK_SELL, ASK_PLACES = range(3)
 
 # جلب التوكن ومعرف المالك من متغيرات البيئة
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-OWNER_ID = int(os.getenv("OWNER_TELEGRAM_ID")) # تأكد من تحويله لرقم صحيح
-# رقم الواتساب اللي راح يرسل الفاتورة عليه
-OWNER_PHONE_NUMBER = "+9647733921468" # تم تحديده هنا مباشرة حسب طلبك
+OWNER_ID = int(os.getenv("OWNER_TELEGRAM_ID")) 
+OWNER_PHONE_NUMBER = "+9647733921468" 
 
-# التأكد من وجود المتغيرات
 if TOKEN is None:
     raise ValueError("TELEGRAM_BOT_TOKEN environment variable not set.")
 if OWNER_ID is None:
@@ -139,7 +157,6 @@ def format_float(value):
         return formatted[:-2]
     return formatted
 
-
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("أهلاً بك! لإعداد طلبية، دز الطلبية كلها برسالة واحدة.\n\n*السطر الأول:* عنوان الزبون.\n*الأسطر الباقية:* كل منتج بسطر واحد.", parse_mode="Markdown")
 
@@ -152,15 +169,15 @@ async def edited_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await process_order(update, context, update.edited_message, edited=True)
 
 async def process_order(update, context, message, edited=False):
-    user_id = str(message.from_user.id) # تحويل الـ ID إلى string للحفظ في JSON
+    user_id = str(message.from_user.id)
     lines = message.text.strip().split('\n')
     if len(lines) < 2:
-        if not edited: # لا ترد على الرسائل غير المؤهلة إذا لم تكن رسالة معدلة
+        if not edited:
             await message.reply_text("الرجاء التأكد من كتابة عنوان الزبون في السطر الأول والمنتجات في الأسطر التالية.")
         return
 
     title = lines[0]
-    products = [p.strip() for p in lines[1:] if p.strip()] # تنظيف المنتجات
+    products = [p.strip() for p in lines[1:] if p.strip()]
 
     if not products:
         if not edited:
@@ -170,121 +187,139 @@ async def process_order(update, context, message, edited=False):
     existing_order_id = None
     # البحث عن طلبية موجودة لنفس المستخدم ونفس العنوان
     for oid, order in orders.items():
-        # هنا نتأكد أن user_id المخزن هو str (مهم إذا كانت البيانات القديمة integer)
-        if str(order.get("user_id")) == user_id and order.get("title") == title: # استخدام .get للحماية
+        if str(order.get("user_id")) == user_id and order.get("title") == title:
             existing_order_id = oid
             break
 
-    # إذا كانت رسالة معدلة، ابحث عن الطلبية المرتبطة بها
     if edited:
-        for oid, msg_id in last_button_message.items():
-            if msg_id == message.message_id:
-                # التأكد من أن الطلب لا يزال موجوداً قبل استخدامه
-                if oid in orders:
+        # البحث عن طلبية موجودة مرتبطة بهذه الرسالة المعدلة
+        for oid, msg_info in last_button_message.items():
+            if msg_info.get("message_id") == message.message_id and str(msg_info.get("chat_id")) == str(message.chat_id):
+                if oid in orders and str(orders[oid].get("user_id")) == user_id:
                     existing_order_id = oid
                 break
-        # إذا تم العثور على ID في last_button_message ولكن الطلب غير موجود حالياً في orders (بسبب إعادة التشغيل)
+        
+        # إذا تم تعديل رسالة ليس لها طلب موجود أو ملك لمستخدم آخر، عاملها كطلب جديد
         if existing_order_id and existing_order_id not in orders:
-            existing_order_id = None # نعتبره غير موجود
-            
-        if existing_order_id and str(orders[existing_order_id].get("user_id")) != user_id: # استخدام .get للحماية
-            # تجنب تعديل طلبية شخص آخر عن طريق الخطأ
             existing_order_id = None
-
+        if existing_order_id and str(orders[existing_order_id].get("user_id")) != user_id:
+            existing_order_id = None
 
     if existing_order_id:
         order_id = existing_order_id
-        old_products = set(orders[order_id].get("products", [])) # استخدام .get للحماية
+        old_products = set(orders[order_id].get("products", []))
         new_products = set(products)
-        added_products = list(new_products - old_products) # المنتجات الجديدة فقط
+        added_products = list(new_products - old_products)
         
-        # تحديث العنوان والمنتجات للطلبية الموجودة
         orders[order_id]["title"] = title
-        
-        # إضافة المنتجات الجديدة فقط (تجنب التكرار)
         for p in added_products:
             if p not in orders[order_id]["products"]:
                 orders[order_id]["products"].append(p)
         
-        # تهيئة التسعير للمنتجات المضافة حديثاً
         for p in added_products:
-            if p not in pricing.get(order_id, {}): # استخدام .get للحماية
-                pricing.setdefault(order_id, {})[p] = {} # تأكد من تهيئة pricing[order_id]
+            if p not in pricing.get(order_id, {}):
+                pricing.setdefault(order_id, {})[p] = {}
         
-        save_data() # حفظ التغييرات
+        save_data()
         await show_buttons(message.chat_id, context, user_id, order_id)
         return
 
     # إنشاء طلبية جديدة
-    order_id = str(uuid.uuid4())[:8] # معرف فريد للطلبية
+    order_id = str(uuid.uuid4())[:8]
     invoice_no = get_invoice_number()
     orders[order_id] = {"user_id": user_id, "title": title, "products": products}
-    pricing[order_id] = {p: {} for p in products} # تهيئة التسعير لكل منتج
+    pricing[order_id] = {p: {} for p in products}
     invoice_numbers[order_id] = invoice_no
     
-    save_data() # حفظ البيانات بعد إنشاء طلب جديد
+    save_data()
     
     await message.reply_text(f"استلمت الطلب بعنوان: *{title}* (عدد المنتجات: {len(products)})", parse_mode="Markdown")
     await show_buttons(message.chat_id, context, user_id, order_id)
 
-async def show_buttons(chat_id, context, user_id, order_id):
-    # التأكد من أن order_id موجود في orders قبل محاولة الوصول إليه
+async def show_buttons(chat_id, context, user_id, order_id, is_final_buttons=False):
     if order_id not in orders:
-        print(f"DEBUG: Attempted to show buttons for non-existent order_id: {order_id}")
+        logger.warning(f"Attempted to show buttons for non-existent order_id: {order_id}")
         await context.bot.send_message(chat_id=chat_id, text="عذراً، الطلب الذي تحاول الوصول إليه غير موجود أو تم حذفه. الرجاء بدء طلبية جديدة.")
         return
 
     order = orders[order_id]
-    buttons = []
+    
+    # فصل المنتجات المكتملة عن غير المكتملة لغرض الترتيب
+    completed_products = []
+    pending_products = []
     for p in order["products"]:
-        # التحقق مما إذا كان المنتج قد تم تسعيره بالكامل
-        is_done = p in pricing.get(order_id, {}) and 'buy' in pricing[order_id].get(p, {}) and 'sell' in pricing[order_id].get(p, {})
-        label = f"✅ {p}" if is_done else p
-        # هنا تم إرجاع الـ callback_data إلى الشكل الأبسط
-        buttons.append([InlineKeyboardButton(label, callback_data=f"{order_id}|{p}")]) 
-    
-    markup = InlineKeyboardMarkup(buttons)
-    
-    # محاولة حذف الرسالة القديمة للأزرار لتجنب الفوضى
-    if order_id in last_button_message:
-        try:
-            # هنا قد تحتاج لتحسين منطق الحذف إذا كان هناك تحديث سريع
-            # أو إذا كانت الرسائل قديمة جداً
-            await context.bot.delete_message(chat_id=chat_id, message_id=last_button_message[order_id])
-        except Exception as e:
-            print(f"DEBUG: Could not delete old button message {last_button_message[order_id]} for order {order_id}: {e}")
-            pass # تجاهل الخطأ إذا كانت الرسالة غير موجودة أو لم يتم حذفها
+        if p in pricing.get(order_id, {}) and 'buy' in pricing[order_id].get(p, {}) and 'sell' in pricing[order_id].get(p, {}):
+            completed_products.append(p)
+        else:
+            pending_products.append(p)
+            
+    # فرز المنتجات المكتملة بالأبجدية (اختياري)
+    completed_products.sort()
+    # فرز المنتجات غير المكتملة بالأبجدية (اختياري)
+    pending_products.sort()
 
+    # بناء الأزرار: المكتملة أولاً ثم غير المكتملة
+    buttons_list = []
+    for p in completed_products:
+        buttons_list.append([InlineKeyboardButton(f"✅ {p}", callback_data=f"{order_id}|{p}")])
+    for p in pending_products:
+        buttons_list.append([InlineKeyboardButton(p, callback_data=f"{order_id}|{p}")])
+    
+    markup = InlineKeyboardMarkup(buttons_list)
+    
+    # رسالة أزرار المنتجات يجب أن تبقى ولا تحذف إلا عند إرسال طلب جديد لنفس العنوان
+    # لذلك، لا نحذف الرسالة هنا. بل نعدلها فقط إذا كانت موجودة.
+    
+    msg_info = last_button_message.get(order_id)
+    if msg_info and msg_info.get("chat_id") == chat_id:
+        try:
+            # تعديل الرسالة الموجودة بدلاً من إرسال رسالة جديدة
+            await context.bot.edit_message_reply_markup(
+                chat_id=chat_id,
+                message_id=msg_info["message_id"],
+                reply_markup=markup
+            )
+            # تحديث نص الرسالة إن لزم الأمر
+            await context.bot.edit_message_text(
+                chat_id=chat_id,
+                message_id=msg_info["message_id"],
+                text=f"اضغط على منتج لتحديد سعره من *{order['title']}*:",
+                parse_mode="Markdown",
+                reply_markup=markup
+            )
+            logger.info(f"Edited existing button message {msg_info['message_id']} for order {order_id}")
+            return # لا حاجة لإرسال رسالة جديدة إذا تم التعديل
+        except Exception as e:
+            logger.warning(f"Could not edit old button message {msg_info.get('message_id', 'N/A')} for order {order_id}: {e}. Sending new message.")
+            # إذا فشل التعديل (مثل حذف المستخدم للرسالة)، سنرسل رسالة جديدة
+            del last_button_message[order_id] # حذف الإشارة للرسالة القديمة الفاشلة
+
+    # إذا لم تكن هناك رسالة موجودة أو فشل التعديل، أرسل رسالة جديدة
     msg = await context.bot.send_message(chat_id=chat_id, text=f"اضغط على منتج لتحديد سعره من *{order['title']}*:", reply_markup=markup, parse_mode="Markdown")
-    last_button_message[order_id] = msg.message_id
+    last_button_message[order_id] = {"chat_id": chat_id, "message_id": msg.message_id}
+    save_data() # حفظ ID الرسالة الجديدة
+    logger.info(f"Sent new button message {msg.message_id} for order {order_id}")
+
 
 async def product_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    print(f"DEBUG: Callback query received: {query.data}") # رسالة للـ Logs
-    await query.answer() # يجب الإجابة على الكولباك كويري
+    logger.info(f"Callback query received: {query.data}")
+    await query.answer()
 
-    user_id = str(query.from_user.id) # تحويل الـ ID إلى string
+    user_id = str(query.from_user.id)
     
-    # محاولة فك الـ callback_data
     try:
         order_id, product = query.data.split("|", 1) 
-    except ValueError as e: # إذا لم يكن هناك '|' في الـ callback_data
-        print(f"ERROR: Failed to parse callback_data for product selection: {query.data}. Error: {e}")
+    except ValueError as e:
+        logger.error(f"Failed to parse callback_data for product selection: {query.data}. Error: {e}")
         await query.message.reply_text("عذراً، حدث خطأ في بيانات الزر. الرجاء بدء طلبية جديدة.")
         return ConversationHandler.END
 
-    # التحقق من أن الطلب والمنتج لا يزالان موجودين
-    # تأكد من أن order_id موجود في orders قبل الوصول إلى [order_id]
-    if order_id not in orders or product not in orders[order_id].get("products", []): # استخدام .get للحماية
-        print(f"DEBUG: Order ID '{order_id}' not found in orders or Product '{product}' not in products for order '{order_id}'.") # رسالة للـ Logs
-        print(f"DEBUG: Current orders keys: {list(orders.keys())}")
-        if order_id in orders:
-            print(f"DEBUG: Products in order '{order_id}': {orders[order_id].get('products', [])}")
-        
+    if order_id not in orders or product not in orders[order_id].get("products", []):
+        logger.warning(f"Order ID '{order_id}' not found or Product '{product}' not in products for order '{order_id}'.")
         await query.message.reply_text("عذراً، الطلب أو المنتج غير موجود. الرجاء بدء طلبية جديدة أو التحقق من المنتجات.")
         return ConversationHandler.END
     
-    # تهيئة current_product للمستخدم الحالي
     current_product[user_id] = {"order_id": order_id, "product": product}
     await query.message.reply_text(f"تمام، كم سعر شراء *'{product}'*؟", parse_mode="Markdown")
     return ASK_BUY
@@ -298,7 +333,6 @@ async def receive_buy_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     order_id, product = data["order_id"], data["product"]
     
-    # تأكد أن الطلب والمنتج لا يزالان صالحين بعد أي إعادة تشغيل
     if order_id not in orders or product not in orders[order_id].get("products", []):
         await update.message.reply_text("عذراً، الطلب أو المنتج لم يعد موجوداً. الرجاء بدء طلبية جديدة.")
         return ConversationHandler.END
@@ -312,9 +346,8 @@ async def receive_buy_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("الرجاء إدخال رقم صحيح لسعر الشراء. بيش اشتريت؟")
         return ASK_BUY
     
-    # تأكد من أن pricing[order_id] موجود قبل setdefault
     pricing.setdefault(order_id, {}).setdefault(product, {})["buy"] = price
-    save_data() # حفظ بعد تحديث سعر الشراء
+    save_data()
 
     await update.message.reply_text(f"شكراً. وهسه، بيش راح تبيع *'{product}'*؟", parse_mode="Markdown")
     return ASK_SELL
@@ -328,7 +361,6 @@ async def receive_sell_price(update: Update, context: ContextTypes.DEFAULT_TYPE)
     
     order_id, product = data["order_id"], data["product"]
     
-    # تأكد أن الطلب والمنتج لا يزالان صالحين بعد أي إعادة تشغيل
     if order_id not in orders or product not in orders[order_id].get("products", []):
         await update.message.reply_text("عذراً، الطلب أو المنتج لم يعد موجوداً. الرجاء بدء طلبية جديدة.")
         return ConversationHandler.END
@@ -342,19 +374,16 @@ async def receive_sell_price(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await update.message.reply_text("الرجاء إدخال رقم صحيح لسعر البيع. بيش حتبيع؟")
         return ASK_SELL
     
-    # تأكد من أن pricing[order_id] و pricing[order_id][product] موجودين
     pricing.setdefault(order_id, {}).setdefault(product, {})["sell"] = price
-    save_data() # حفظ بعد تحديث سعر البيع
+    save_data()
 
     await update.message.reply_text(f"تم حفظ السعر لـ *'{product}'*.", parse_mode="Markdown")
     
-    # تأكد من أن الطلب لا يزال موجوداً قبل الوصول إليه
     if order_id not in orders:
         await update.message.reply_text("عذراً، الطلب لم يعد موجوداً بعد حفظ السعر. الرجاء بدء طلبية جديدة.")
         return ConversationHandler.END
 
     order = orders[order_id]
-    # التحقق مما إذا كانت جميع المنتجات قد تم تسعيرها
     all_priced = True
     for p in order["products"]:
         if p not in pricing.get(order_id, {}) or "buy" not in pricing[order_id].get(p, {}) or "sell" not in pricing[order_id].get(p, {}):
@@ -364,33 +393,24 @@ async def receive_sell_price(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if all_priced:
         context.user_data["completed_order_id"] = order_id
         
-        # أزرار اختيار عدد المحلات
         buttons = []
         emojis = ['1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣', '6️⃣', '7️⃣', '8️⃣', '9️⃣', '🔟']
         for i in range(1, 11):
             buttons.append(InlineKeyboardButton(emojis[i-1], callback_data=f"places_{i}"))
         
-        # تقسيم الأزرار على سطرين أو أكثر
         keyboard = [buttons[i:i + 5] for i in range(0, len(buttons), 5)]
         reply_markup = InlineKeyboardMarkup(keyboard)
 
-        # حذف رسالة الأزرار القديمة (المنتجات) قبل إرسال أزرار المحلات
-        if order_id in last_button_message:
-            try:
-                await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=last_button_message[order_id])
-                del last_button_message[order_id] # حذفها من الذاكرة أيضاً
-            except Exception as e:
-                print(f"DEBUG: Could not delete old button message {last_button_message.get(order_id, 'N/A')} before showing places buttons: {e}")
-                pass
-
+        # **** هنا التغيير: لا تحذف رسالة أزرار المنتجات، فقط أزرار المحلات إذا كانت موجودة
+        # أزرار المنتجات ستبقى ويمكن للمجهز تعديلها لاحقاً
+        # إذا كانت هناك رسالة أزرار محلات سابقة، نحذفها أو نعدلها لتجنب الفوضى
+        # لكن لا نحذف رسالة أزرار المنتجات
+        
         await update.message.reply_text("كل المنتجات تم تسعيرها. كم محل كلفتك الطلبية؟ (اختر من الأزرار أو اكتب الرقم)", reply_markup=reply_markup)
         return ASK_PLACES
     else:
-        # إذا لم تكتمل جميع المنتجات، نعيد عرض أزرار المنتجات ولا ننهي المحادثة
         await show_buttons(update.effective_chat.id, context, user_id, order_id)
-        # **** هذا هو التغيير الجديد المهم: نرجع لحالة تسمح بالتعامل مع أزرار الكولباك
-        return ASK_BUY # أو ASK_SELL، كلاهما يعمل طالما أننا أضفنا CallbackQueryHandler لهما
-                      # العودة إلى ASK_BUY منطقية لأنها نقطة البداية لتسعير منتج جديد.
+        return ASK_BUY # نرجع لحالة ASK_BUY لتمكين اختيار منتج آخر أو تعديله
 
 def calculate_extra(places):
     extra_fees = {
@@ -401,45 +421,53 @@ def calculate_extra(places):
         5: 3,
         6: 4
     }
-    return extra_fees.get(places, places - 2) # إذا كان الرقم مو موجود بالقاموس، يرجع places - 2
+    return extra_fees.get(places, places - 2)
 
 async def receive_place_count(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global daily_profit
     
     places = None
-    message_to_edit = None
+    message_to_send_from = None # نستخدم هذا لتحديد الرسالة التي سنرسل منها الردود
 
     if update.callback_query:
         query = update.callback_query
-        print(f"DEBUG: Places callback query received: {query.data}") # رسالة للـ Logs
+        logger.info(f"Places callback query received: {query.data}")
         await query.answer()
         if query.data.startswith("places_"):
             places = int(query.data.split("_")[1])
-            message_to_edit = query.message # استخدم رسالة الكويري للتعديل عليها لاحقاً
+            message_to_send_from = query.message
+            # حذف أزرار المحلات بعد الاختيار لتجنب الكليكات المكررة
+            try:
+                await context.bot.edit_message_reply_markup(
+                    chat_id=query.message.chat_id,
+                    message_id=query.message.message_id,
+                    reply_markup=None # لإزالة الأزرار
+                )
+            except Exception as e:
+                logger.warning(f"Could not remove places buttons: {e}")
+                pass
         else:
-            # إذا كان الكولباك كويري ليس لـ 'places_'، فليس من المفترض أن يصل إلى هنا.
-            # هذا قد يكون بسبب كليك على زر قديم أو مشكلة في توجيه المحادثة.
-            print(f"ERROR: Unexpected callback_query in receive_place_count: {query.data}")
+            logger.error(f"Unexpected callback_query in receive_place_count: {query.data}")
             await query.edit_message_text("عذراً، حدث خطأ غير متوقع. الرجاء المحاولة مرة أخرى أو بدء طلبية جديدة.")
             return ConversationHandler.END
     elif update.message:
-        message_to_edit = update.message
+        message_to_send_from = update.message
         try:
-            places = int(message_to_edit.text.strip())
+            places = int(message_to_send_from.text.strip())
             if places < 0:
-                await message_to_edit.reply_text("عدد المحلات يجب أن يكون رقماً موجباً. الرجاء إدخال عدد المحلات بشكل صحيح.")
+                await message_to_send_from.reply_text("عدد المحلات يجب أن يكون رقماً موجباً. الرجاء إدخال عدد المحلات بشكل صحيح.")
                 return ASK_PLACES
         except ValueError:
-            await message_to_edit.reply_text("الرجاء إدخال عدد صحيح لعدد المحلات.")
+            await message_to_send_from.reply_text("الرجاء إدخال عدد صحيح لعدد المحلات.")
             return ASK_PLACES
     
-    if places is None: # للتأكد إذا ماكو لا كويري ولا رسالة
-        return ConversationHandler.END # إنهاء المحادثة إذا لم يتم تحديد المحلات بشكل صحيح
+    if places is None:
+        logger.warning("No places count received.")
+        return ConversationHandler.END
 
     order_id = context.user_data.get("completed_order_id")
-    # تأكد أن الطلب لا يزال موجوداً قبل الوصول إليه
     if not order_id or order_id not in orders:
-        await message_to_edit.reply_text("عذراً، لا توجد طلبية مكتملة لمعالجتها أو تم حذفها. الرجاء بدء طلبية جديدة.")
+        await message_to_send_from.reply_text("عذراً، لا توجد طلبية مكتملة لمعالجتها أو تم حذفها. الرجاء بدء طلبية جديدة.")
         return ConversationHandler.END
 
     order = orders[order_id]
@@ -447,7 +475,6 @@ async def receive_place_count(update: Update, context: ContextTypes.DEFAULT_TYPE
     total_buy = 0.0
     total_sell = 0.0
     
-    # بناء الفاتورة الأصلية (للمجهز)
     invoice_text_for_owner = [
         f"رقم الفاتورة: {invoice}",
         f"عنوان الزبون: {order['title']}",
@@ -466,7 +493,7 @@ async def receive_place_count(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     net_profit = total_sell - total_buy
     daily_profit += net_profit
-    save_data() # حفظ الربح اليومي
+    save_data()
 
     extra = calculate_extra(places)
     total_with_extra = total_sell + extra
@@ -479,13 +506,11 @@ async def receive_place_count(update: Update, context: ContextTypes.DEFAULT_TYPE
     
     final_owner_invoice_text = "\n".join(invoice_text_for_owner)
 
-    # إرسال الفاتورة الأصلية للمجهز
-    await message_to_edit.reply_text(
+    await message_to_send_from.reply_text(
         f"**الفاتورة النهائية:**\n{final_owner_invoice_text}",
         parse_mode="Markdown"
     )
 
-    # بناء نسخة الزبون (لأبي الأكبر)
     running_total = 0.0
     customer_lines = []
     for p in order["products"]:
@@ -496,7 +521,6 @@ async def receive_place_count(update: Update, context: ContextTypes.DEFAULT_TYPE
         else:
             customer_lines.append(f"{p} - (لم يتم تسعيره)")
     
-    # سطر كلفة التجهيز للمحلات
     customer_lines.append(f"كلفة تجهيز من - {places} محلات {format_float(extra)} = {format_float(total_with_extra)}")
     
     customer_text = (
@@ -507,24 +531,58 @@ async def receive_place_count(update: Update, context: ContextTypes.DEFAULT_TYPE
         f"\nالمجموع الكلي: {format_float(total_with_extra)} (مع احتساب عدد المحلات)"
     )
     
-    await message_to_edit.reply_text("نسخة الزبون:\n" + customer_text, parse_mode="Markdown")
+    await message_to_send_from.reply_text("نسخة الزبون:\n" + customer_text, parse_mode="Markdown")
 
-    # رابط الواتساب (للفاتورة الأصلية)
-    # التأكد من إرسال final_owner_invoice_text
-    encoded_owner_invoice = final_owner_invoice_text.replace(" ", "%20").replace("\n", "%0A").replace("*", "") # إزالة النجوم للمشاركة
+    encoded_owner_invoice = final_owner_invoice_text.replace(" ", "%20").replace("\n", "%0A").replace("*", "")
     wa_link = f"https://wa.me/{OWNER_PHONE_NUMBER}?text={encoded_owner_invoice}"
-    await message_to_edit.reply_text("دوس على هذا الرابط حتى ترسل الفاتورة *لي* على الواتساب:\n" + wa_link, parse_mode="Markdown")
+    await message_to_send_from.reply_text("دوس على هذا الرابط حتى ترسل الفاتورة *لي* على الواتساب:\n" + wa_link, parse_mode="Markdown")
     
-    # يمكن حذف الطلبية بعد الانتهاء منها لمنع تراكم البيانات إذا لم تكن بحاجتها في التقارير الدائمة
-    # del orders[order_id]
-    # del pricing[order_id]
-    # del invoice_numbers[order_id]
-    # save_data() # حفظ بعد الحذف
+    # **** إضافة أزرار "تعديل الطلب" و "طلب جديد" هنا
+    final_actions_keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("تعديل الطلب الأخير", callback_data=f"edit_last_order_{order_id}")],
+        [InlineKeyboardButton("إنشاء طلب جديد", callback_data="start_new_order")]
+    ])
+    await message_to_send_from.reply_text("شنو تريد تسوي هسه؟", reply_markup=final_actions_keyboard)
 
-    return ConversationHandler.END
+
+    return ConversationHandler.END # إنهاء المحادثة بعد إكمال الطلب وإظهار الخيارات الجديدة
+
+# **** دالة جديدة للتعامل مع زر "تعديل الطلب"
+async def edit_last_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = str(query.from_user.id)
+    # استخلاص order_id من الـ callback_data
+    if query.data.startswith("edit_last_order_"):
+        order_id = query.data.replace("edit_last_order_", "")
+    else:
+        # هذا لا يجب أن يحدث إذا كان النمط صحيحاً
+        await query.message.reply_text("عذراً، حدث خطأ في بيانات الزر. الرجاء المحاولة مرة أخرى.")
+        return ConversationHandler.END
+
+    if order_id not in orders or str(orders[order_id].get("user_id")) != user_id:
+        await query.message.reply_text("عذراً، الطلب الذي تحاول تعديله غير موجود أو ليس لك.")
+        return ConversationHandler.END
+
+    # إعادة عرض أزرار المنتجات لهذا الطلب
+    await show_buttons(query.message.chat_id, context, user_id, order_id)
+    
+    # يجب أن يعود إلى حالة تسمح باستقبال ضغطات الأزرار (product_selected)
+    # وبما أن product_selected موجود في ASK_BUY و ASK_SELL، يمكننا العودة إلى أي منهما
+    # أو يمكننا إنهاء المحادثة الحالية (لتبدأ من جديد عند الضغط على زر المنتج)
+    # ولكن الأفضل أن نعيدها إلى حالة تسمح بالضغط على زر منتج
+    return ASK_BUY # نرجع إلى ASK_BUY لتنشيط ConversationHandler مرة أخرى
+
+async def start_new_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    await query.message.reply_text("تمام، دز الطلبية الجديدة كلها برسالة واحدة.\n\n*السطر الأول:* عنوان الزبون.\n*الأسطر الباقية:* كل منتج بسطر واحد.", parse_mode="Markdown")
+    return ConversationHandler.END # ننهي المحادثة الحالية لبدء واحدة جديدة بشكل طبيعي عند إرسال الطلب
+
 
 async def show_profit(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if str(update.message.from_user.id) != str(OWNER_ID): # تأكد من مقارنة السلاسل النصية
+    if str(update.message.from_user.id) != str(OWNER_ID):
         await update.message.reply_text("عذراً، هذا الأمر متاح للمالك فقط.")
         return
     await update.message.reply_text(f"الربح التراكمي الإجمالي: *{format_float(daily_profit)}* دينار", parse_mode="Markdown")
@@ -534,7 +592,6 @@ async def reset_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("عذراً، هذا الأمر متاح للمالك فقط.")
         return
     
-    # طلب تأكيد قبل التصفير
     keyboard = [
         [InlineKeyboardButton("نعم، متأكد", callback_data="confirm_reset")],
         [InlineKeyboardButton("لا، إلغاء", callback_data="cancel_reset")]
@@ -551,20 +608,20 @@ async def confirm_reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if query.data == "confirm_reset":
-        global daily_profit, orders, pricing, invoice_numbers
+        global daily_profit, orders, pricing, invoice_numbers, last_button_message
         daily_profit = 0.0
         orders.clear()
         pricing.clear()
         invoice_numbers.clear()
+        last_button_message.clear() # مسح معلومات رسائل الأزرار المحفوظة
         
-        # إعادة تعيين عداد الفواتير
         try:
             with open(COUNTER_FILE, "w") as f:
                 f.write("1")
         except Exception as e:
-            print(f"ERROR: Could not reset invoice counter file: {e}")
+            logger.error(f"Could not reset invoice counter file: {e}")
 
-        save_data() # حفظ البيانات بعد التصفير
+        save_data()
         await query.edit_message_text("تم تصفير الأرباح ومسح كل الطلبات بنجاح.")
     elif query.data == "cancel_reset":
         await query.edit_message_text("تم إلغاء عملية التصفير.")
@@ -589,7 +646,6 @@ async def show_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
         order_buy = 0.0
         order_sell = 0.0
         
-        # تأكد من أن 'products' موجودة وقابلة للتكرار
         if isinstance(order.get("products"), list):
             for p_name in order["products"]:
                 total_products += 1
@@ -609,7 +665,6 @@ async def show_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             details.append(f"  (لا توجد منتجات محددة لهذا الطلب)")
 
-        # ربح الطلبية الواحدة
         details.append(f"  *ربح هذه الطلبية:* {format_float(order_sell - order_buy)}")
 
     top_product_str = "لا يوجد"
@@ -638,9 +693,14 @@ def main():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & filters.Regex("^الارباح$|^ارباح$"), show_profit))
     app.add_handler(MessageHandler(filters.TEXT & filters.Regex("^صفر$|^تصفير$"), reset_all))
-    app.add_handler(CallbackQueryHandler(confirm_reset, pattern="^(confirm_reset|cancel_reset)$")) # للتعامل مع أزرار التأكيد
+    app.add_handler(CallbackQueryHandler(confirm_reset, pattern="^(confirm_reset|cancel_reset)$"))
     app.add_handler(MessageHandler(filters.TEXT & filters.Regex("^التقارير$|^تقرير$|^تقارير$"), show_report))
     app.add_handler(MessageHandler(filters.UpdateType.EDITED_MESSAGE, edited_message))
+
+    # إضافة الهاندلرات الجديدة لأزرار ما بعد اكتمال الطلب
+    app.add_handler(CallbackQueryHandler(edit_last_order, pattern="^edit_last_order_"))
+    app.add_handler(CallbackQueryHandler(start_new_order, pattern="^start_new_order$"))
+
 
     # محادثة تجهيز الطلبات
     conv_handler = ConversationHandler(
@@ -651,28 +711,24 @@ def main():
         states={
             ASK_BUY: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, receive_buy_price),
-                # **** التغيير هنا: إضافة CallbackQueryHandler لنفس الحالة (ASK_BUY)
-                # هذا يسمح للمستخدم بالضغط على أزرار المنتجات حتى وهو في حالة انتظار سعر الشراء
-                CallbackQueryHandler(product_selected) 
+                CallbackQueryHandler(product_selected) # يسمح بالضغط على أزرار المنتجات من هذه الحالة
             ],
             ASK_SELL: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, receive_sell_price),
-                # **** التغيير هنا: إضافة CallbackQueryHandler لنفس الحالة (ASK_SELL)
-                # هذا يسمح للمستخدم بالضغط على أزرار المنتجات حتى وهو في حالة انتظار سعر البيع
-                CallbackQueryHandler(product_selected) 
+                CallbackQueryHandler(product_selected) # يسمح بالضغط على أزرار المنتجات من هذه الحالة
             ],
             ASK_PLACES: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, receive_place_count), # للتعامل مع الإدخال اليدوي
-                CallbackQueryHandler(receive_place_count, pattern="^places_") # للتعامل مع أزرار عدد المحلات
+                MessageHandler(filters.TEXT & ~filters.COMMAND, receive_place_count),
+                CallbackQueryHandler(receive_place_count, pattern="^places_")
             ],
         },
         fallbacks=[
-            CommandHandler("cancel", lambda u, c: ConversationHandler.END) # ممكن تضيف أمر cancel
+            CommandHandler("cancel", lambda u, c: ConversationHandler.END)
         ]
     )
     app.add_handler(conv_handler)
 
-    print("Bot is running...")
+    logger.info("Bot is running...")
     app.run_polling()
 
 if __name__ == "__main__":
