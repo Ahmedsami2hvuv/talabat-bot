@@ -253,12 +253,9 @@ async def show_buttons(chat_id, context, user_id, order_id, is_final_buttons=Fal
         else:
             pending_products.append(p)
             
-    # فرز المنتجات المكتملة بالأبجدية (اختياري)
     completed_products.sort()
-    # فرز المنتجات غير المكتملة بالأبجدية (اختياري)
     pending_products.sort()
 
-    # بناء الأزرار: المكتملة أولاً ثم غير المكتملة
     buttons_list = []
     for p in completed_products:
         buttons_list.append([InlineKeyboardButton(f"✅ {p}", callback_data=f"{order_id}|{p}")])
@@ -267,26 +264,32 @@ async def show_buttons(chat_id, context, user_id, order_id, is_final_buttons=Fal
     
     markup = InlineKeyboardMarkup(buttons_list)
     
+    # **** التعديل هنا: إرسال الرسالة الجديدة أولاً
+    msg = await context.bot.send_message(
+        chat_id=chat_id,
+        text=f"اضغط على منتج لتحديد سعره من *{order['title']}*:",
+        reply_markup=markup,
+        parse_mode="Markdown"
+    )
+    logger.info(f"Sent new button message {msg.message_id} for order {order_id}")
+
     msg_info = last_button_message.get(order_id)
     if msg_info and msg_info.get("chat_id") == chat_id:
         try:
-            # **** التعديل هنا: حذف الرسالة القديمة دائماً قبل إرسال الجديدة
+            # **** ثم حذف الرسالة القديمة
             await context.bot.delete_message(chat_id=chat_id, message_id=msg_info["message_id"])
             logger.info(f"Deleted old button message {msg_info['message_id']} for order {order_id}")
         except Exception as e:
-            logger.warning(f"Could not delete old button message {msg_info.get('message_id', 'N/A')} for order {order_id}: {e}. Proceeding to send new message.")
+            logger.warning(f"Could not delete old button message {msg_info.get('message_id', 'N/A')} for order {order_id}: {e}. It might have been deleted already or is inaccessible.")
             pass # تجاهل الخطأ إذا الرسالة لم تعد موجودة أو لا يمكن حذفها
         finally:
             # إزالة الإشارة للرسالة القديمة من الذاكرة والملف
             if order_id in last_button_message:
                 del last_button_message[order_id]
                 save_data() # حفظ التغيير لضمان عدم الرجوع للرسالة المحذوفة بعد إعادة تشغيل البوت
-
-    # **** التعديل هنا: دائماً أرسل رسالة جديدة بالأزرار في أسفل الدردشة
-    msg = await context.bot.send_message(chat_id=chat_id, text=f"اضغط على منتج لتحديد سعره من *{order['title']}*:", reply_markup=markup, parse_mode="Markdown")
+    
     last_button_message[order_id] = {"chat_id": chat_id, "message_id": msg.message_id}
     save_data() # حفظ الـ ID والـ chat_id للرسالة الجديدة
-    logger.info(f"Sent new button message {msg.message_id} for order {order_id}")
 
 
 async def product_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -389,8 +392,6 @@ async def receive_sell_price(update: Update, context: ContextTypes.DEFAULT_TYPE)
         keyboard = [buttons[i:i + 5] for i in range(0, len(buttons), 5)]
         reply_markup = InlineKeyboardMarkup(keyboard)
 
-        # لا نحذف رسالة أزرار المنتجات هنا، بل تبقى موجودة للتعديل لأن show_buttons ستنشئ رسالة جديدة
-        
         await update.message.reply_text("كل المنتجات تم تسعيرها. كم محل كلفتك الطلبية؟ (اختر من الأزرار أو اكتب الرقم)", reply_markup=reply_markup)
         return ASK_PLACES
     else:
@@ -620,7 +621,7 @@ async def show_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
     for order_id, order in orders.items():
         invoice = invoice_numbers.get(order_id, "غير معروف")
         details.append(f"\n**فاتورة رقم:** {invoice}")
-        details.append(f"**عنوان الزبون:** {order['title']}") # تصحيح العنوان هنا
+        details.append(f"**عنوان الزبون:** {order['title']}")
         
         order_buy = 0.0
         order_sell = 0.0
