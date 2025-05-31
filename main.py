@@ -15,7 +15,7 @@ invoice_numbers = {}
 daily_profit = 0.0
 OWNER_ID = 7032076289
 
-ASK_BUY, ASK_SELL = range(2)
+ASK_BUY, ASK_SELL, ASK_PLACES = range(3)
 TOKEN = "7508502359:AAFtlXVMJGUiWaeqJZc0o03Yy-SgVYE_xz8"
 
 counter_file = "invoice_counter.txt"
@@ -47,42 +47,41 @@ async def process_order(update, context, message, edited=False):
     if len(lines) < 2:
         return
 
-    title = lines[0]  
-    products = lines[1:]  
+    title = lines[0]
+    products = lines[1:]
 
-    existing_order_id = None  
-    for oid, order in orders.items():  
-        if order["user_id"] == user_id and order["title"] == title:  
-            existing_order_id = oid  
-            break  
+    existing_order_id = None
+    for oid, order in orders.items():
+        if order["user_id"] == user_id and order["title"] == title:
+            existing_order_id = oid
+            break
 
-    if edited:  
-        for oid, order in orders.items():  
-            if order["user_id"] == user_id and message.message_id == last_button_message.get(oid):  
-                existing_order_id = oid  
-                break  
+    if edited:
+        for oid, order in orders.items():
+            if order["user_id"] == user_id and message.message_id == last_button_message.get(oid):
+                existing_order_id = oid
+                break
 
-    if existing_order_id:  
-        order_id = existing_order_id  
-        old_products = set(orders[order_id]["products"])  
-        new_products = set(products)  
-        added_products = list(new_products - old_products)  
-        orders[order_id]["title"] = title  
-        orders[order_id]["products"] += [p for p in added_products if p not in orders[order_id]["products"]]  
-        # الحفاظ على الأسعار القديمة دون المساس بها
+    if existing_order_id:
+        order_id = existing_order_id
+        old_products = set(orders[order_id]["products"])
+        new_products = set(products)
+        added_products = list(new_products - old_products)
+        orders[order_id]["title"] = title
+        orders[order_id]["products"] += [p for p in added_products if p not in orders[order_id]["products"]]
         for p in added_products:
             if p not in pricing[order_id]:
-                pricing[order_id][p] = {}  # إضافة المنتج الجديد دون التأثير على البيانات القديمة
+                pricing[order_id][p] = {}
 
-        await show_buttons(message.chat_id, context, user_id, order_id)  
-        return  
+        await show_buttons(message.chat_id, context, user_id, order_id)
+        return
 
-    order_id = str(uuid.uuid4())[:8]  
-    invoice_no = get_invoice_number()  
-    orders[order_id] = {"user_id": user_id, "title": title, "products": products}  
-    pricing[order_id] = {}  
-    invoice_numbers[order_id] = invoice_no  
-    await message.reply_text(f"استلمت الطلب: {title} ({len(products)} منتج)")  
+    order_id = str(uuid.uuid4())[:8]
+    invoice_no = get_invoice_number()
+    orders[order_id] = {"user_id": user_id, "title": title, "products": products}
+    pricing[order_id] = {}
+    invoice_numbers[order_id] = invoice_no
+    await message.reply_text(f"استلمت الطلب: {title} ({len(products)} منتج)")
     await show_buttons(message.chat_id, context, user_id, order_id)
 
 async def show_buttons(chat_id, context, user_id, order_id):
@@ -125,7 +124,6 @@ async def receive_buy_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ASK_SELL
 
 async def receive_sell_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    global daily_profit
     user_id = update.message.from_user.id
     data = current_product.get(user_id)
     if not data: return
@@ -139,32 +137,67 @@ async def receive_sell_price(update: Update, context: ContextTypes.DEFAULT_TYPE)
     await update.message.reply_text(f"تم حفظ السعر لـ '{product}'.")
     await show_buttons(update.effective_chat.id, context, user_id, order_id)
     order = orders[order_id]
-    invoice = invoice_numbers.get(order_id, "غير معروف")
     if all(p in pricing[order_id] and "buy" in pricing[order_id][p] and "sell" in pricing[order_id][p] for p in order["products"]):
-        total_buy = total_sell = 0
-        summary = [f"رقم الفاتورة: {invoice}", f"عنوان الزبون: {order['title']}"]
-        for p in order["products"]:
-            buy = pricing[order_id][p]["buy"]
-            sell = pricing[order_id][p]["sell"]
-            profit = sell - buy
-            total_buy += buy
-            total_sell += sell
-            summary.append(f"{p} - شراء: {buy}, بيع: {sell}, ربح: {profit}")
-        net_profit = total_sell - total_buy
-        daily_profit += net_profit
-        await update.message.reply_text("\n".join(summary) + f"\n\nالمجموع شراء: {total_buy}\nالمجموع بيع: {total_sell}\nالربح الكلي: {net_profit}")
-        running_total = 0
-        customer_lines = []
-        for p in order["products"]:
-            sell = pricing[order_id][p]["sell"]
-            running_total += sell
-            customer_lines.append(f"{p} - {sell} = {running_total}")
-        customer_text = f"أبو الأكبر للتوصيل\nرقم الفاتورة: {invoice}\nعنوان الزبون: {order['title']}\n\nالمواد:\n" + "\n".join(customer_lines)
-        customer_text += f"\n\nمجموع القائمة الكلي: {running_total} (بدون كلفة التوصيل)"
-        await update.message.reply_text("نسخة الزبون:\n" + customer_text)
-        encoded = customer_text.replace(" ", "%20").replace("\n", "%0A")
-        wa_link = f"https://wa.me/?text={encoded}"
-        await update.message.reply_text("دوس الرابط حتى تروح لابو الاكبر:\n" + wa_link)
+        context.user_data["completed_order_id"] = order_id
+        await update.message.reply_text("كم محل كلفتك الطلبية؟")
+        return ASK_PLACES
+    return ConversationHandler.END
+
+def calculate_extra(places):
+    if places in [1, 2]:
+        return 0
+    elif places == 3:
+        return 1
+    elif places == 4:
+        return 2
+    elif places == 5:
+        return 3
+    elif places == 6:
+        return 4
+    else:
+        return places - 2
+
+async def receive_place_count(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    global daily_profit
+    try:
+        places = int(update.message.text.strip())
+    except:
+        await update.message.reply_text("اكتب عدد المحلات بشكل صحيح.")
+        return ASK_PLACES
+    order_id = context.user_data.get("completed_order_id")
+    if not order_id: return
+
+    order = orders[order_id]
+    invoice = invoice_numbers.get(order_id, "غير معروف")
+    total_buy = total_sell = 0
+    summary = [f"رقم الفاتورة: {invoice}", f"عنوان الزبون: {order['title']}"]
+    for p in order["products"]:
+        buy = pricing[order_id][p]["buy"]
+        sell = pricing[order_id][p]["sell"]
+        profit = sell - buy
+        total_buy += buy
+        total_sell += sell
+        summary.append(f"{p} - شراء: {buy}, بيع: {sell}, ربح: {profit}")
+    net_profit = total_sell - total_buy
+    daily_profit += net_profit
+    extra = calculate_extra(places)
+    total_with_extra = total_sell + extra
+
+    await update.message.reply_text("\n".join(summary) + f"\n\nالمجموع شراء: {total_buy}\nالمجموع بيع: {total_sell}\nالربح الكلي: {net_profit}\nعدد المحلات: {places} (+{extra})")
+
+    running_total = 0
+    customer_lines = []
+    for p in order["products"]:
+        sell = pricing[order_id][p]["sell"]
+        running_total += sell
+        customer_lines.append(f"{p} - {sell} = {running_total}")
+    running_total += extra
+    customer_text = f"أبو الأكبر للتوصيل\nرقم الفاتورة: {invoice}\nعنوان الزبون: {order['title']}\n\nالمواد:\n" + "\n".join(customer_lines)
+    customer_text += f"\n\nالمجموع الكلي: {running_total} (مع احتساب عدد المحلات)"
+    await update.message.reply_text("نسخة الزبون:\n" + customer_text)
+    encoded = customer_text.replace(" ", "%20").replace("\n", "%0A")
+    wa_link = f"https://wa.me/?text={encoded}"
+    await update.message.reply_text("دوس الرابط حتى تروح لابو الاكبر:\n" + wa_link)
     return ConversationHandler.END
 
 async def show_profit(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -226,6 +259,7 @@ conv_handler = ConversationHandler(
     states={
         ASK_BUY: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_buy_price)],
         ASK_SELL: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_sell_price)],
+        ASK_PLACES: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_place_count)],
     },
     fallbacks=[]
 )
