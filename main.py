@@ -603,7 +603,8 @@ async def receive_place_count(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     target_order_id = context.user_data[user_id].get("completed_order_id") # نجلب order_id من الـ user_data
 
-    if not target_order_id or target_order_id not in orders or str(orders[target_order_id].get("user_id")) != user_id:
+    # تم تعديل هذا الشرط
+    if not target_order_id or target_order_id not in orders: # حذفنا التحقق من user_id هنا
         await context.bot.send_message(chat_id=chat_id, text="عذراً، لا توجد طلبية مكتملة لمعالجتها أو تم حذفها. الرجاء بدء طلبية جديدة.")
         if user_id in context.user_data:
             del context.user_data[user_id]
@@ -657,21 +658,7 @@ async def receive_place_count(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     # تحديث عدد المحلات في بيانات الطلب باستخدام الـ target_order_id
     orders[target_order_id]["places_count"] = places
-    
-    # حساب الربح الصافي للطلبية وإضافته للربح التراكمي
-    order = orders[target_order_id]
-    total_buy_order = 0.0
-    total_sell_order = 0.0
-    for p in order["products"]:
-        if p in pricing.get(target_order_id, {}) and "buy" in pricing[target_order_id].get(p, {}) and "sell" in pricing[target_order_id].get(p, {}):
-            total_buy_order += pricing[target_order_id][p]["buy"]
-            total_sell_order += pricing[target_order_id][p]["sell"]
-    net_profit_order = total_sell_order - total_buy_order
-
-    global daily_profit
-    daily_profit += net_profit_order # إضافة ربح الطلبية للربح التراكمي
-
-    context.application.create_task(save_data_in_background(context)) # نحفظ البيانات بعد تحديث الربح التراكمي
+    context.application.create_task(save_data_in_background(context))
 
     # حذف رسائل الحوار السابقة
     if user_id in context.user_data and 'messages_to_delete' in context.user_data[user_id]:
@@ -999,8 +986,7 @@ async def show_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"**مجموع البيع الكلي (للطلبات المعالجة):** {format_float(total_sell_all_orders)}\n"
         f"**صافي الربح الكلي (للطلبات المعالجة):** {format_float(total_sell_all_orders - total_buy_all_orders)}\n" 
         f"**الربح التراكمي في البوت (منذ آخر تصفير):** {format_float(daily_profit)} دينار\n\n"
-        f"**--- تفاصيل الطلبات ---**\n" + "\n".join(details) +
-        f"\n\n**الربح التراكمي الإجمالي:** *{format_float(daily_profit)}* دينار" # ضفت الربح التراكمي هنا
+        f"**--- تفاصيل الطلبات ---**\n" + "\n".join(details)
     )
     await update.message.reply_text(result, parse_mode="Markdown")
 
@@ -1052,3 +1038,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
