@@ -245,14 +245,16 @@ async def edited_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def process_order(update, context, message, edited=False):
     user_id = str(message.from_user.id)
-    lines = message.text.strip().split('\n')
+    lines = [line.strip() for line in message.text.strip().split('\n') if line.strip()]
+    
     if len(lines) < 2:
         if not edited:
             await message.reply_text("الرجاء التأكد من كتابة عنوان الزبون في السطر الأول والمنتجات في الأسطر التالية.")
         return
 
     title = lines[0]
-    products = [p.strip() for p in lines[1:] if p.strip()]
+    # الحفاظ على الترتيب الأصلي للمنتجات بدون أي فرز
+    products = [p for p in lines[1:] if p.strip()]
 
     if not products:
         if not edited:
@@ -260,9 +262,7 @@ async def process_order(update, context, message, edited=False):
         return
 
     order_id = None
-    # هنا ندور على الطلبية من خلال الـ last_button_message أو إذا موجودة بالـ user_data
     for oid, msg_info in last_button_message.items():
-        # التأكد إنو الرسالة تابعة لنفس المستخدم ونفس الشات
         if msg_info and msg_info.get("message_id") == message.message_id and str(msg_info.get("chat_id")) == str(message.chat_id):
             if oid in orders and str(orders[oid].get("user_id")) == user_id:
                 order_id = oid
@@ -270,44 +270,37 @@ async def process_order(update, context, message, edited=False):
                 break
             else:
                 logger.warning(f"Message ID {message.message_id} found in last_button_message but not linked to user {user_id} or order {oid} is missing. Treating as new.")
-                order_id = None # إعادة التعيين للتأكد من معاملتها كطلب جديد
+                order_id = None
                 break
     
-    # إذا ملكينا بالـ last_button_message، ممكن يكون جاي من زر "تعديل الأسعار"
-    # هذا الشرط مهم لاستمرار تدفق المحادثة بعد تعديل الطلبية من رسالة الزر.
     if not order_id and user_id in context.user_data and "completed_order_id" in context.user_data[user_id]:
         temp_order_id = context.user_data[user_id]["completed_order_id"]
         if temp_order_id in orders and str(orders[temp_order_id].get("user_id")) == user_id:
             order_id = temp_order_id
             logger.info(f"Found existing order {order_id} for user {user_id} based on completed_order_id in user_data.")
 
-
     is_new_order = False
     if not order_id:
         is_new_order = True
         order_id = str(uuid.uuid4())[:8]
         invoice_no = get_invoice_number()
-        # ضفنا "places_count": 0 لتهيئة الطلب الجديد
-        orders[order_id] = {"user_id": user_id, "title": title, "products": products, "places_count": 0} 
+        orders[order_id] = {"user_id": user_id, "title": title, "products": products, "places_count": 0}
         pricing[order_id] = {p: {} for p in products}
         invoice_numbers[order_id] = invoice_no
         logger.info(f"Created new order {order_id} for user {user_id}.")
     else:
-        # إذا الطلبية موجودة، نعدل عليها
         old_products = set(orders[order_id].get("products", []))
         new_products = set(products)
         
         orders[order_id]["title"] = title
         orders[order_id]["products"] = products
 
-        # إضافة منتجات جديدة إلى الـ pricing (بأسعار فارغة)
         for p in new_products:
             if p not in pricing.get(order_id, {}):
                 pricing.setdefault(order_id, {})[p] = {}
         
-        # حذف المنتجات اللي انحذفت من الطلبية من الـ pricing
         if order_id in pricing:
-            for p in old_products - new_products: # المنتجات اللي كانت موجودة وانحذفت
+            for p in old_products - new_products:
                 if p in pricing[order_id]:
                     del pricing[order_id][p]
                     logger.info(f"Removed pricing for product '{p}' from order {order_id}.")
@@ -320,7 +313,7 @@ async def process_order(update, context, message, edited=False):
         await show_buttons(message.chat_id, context, user_id, order_id)
     else:
         await show_buttons(message.chat_id, context, user_id, order_id, confirmation_message="تم تحديث الطلب. الرجاء التأكد من تسعير أي منتجات جديدة.")
-
+        
 async def show_buttons(chat_id, context, user_id, order_id, confirmation_message=None):
     if order_id not in orders:
         logger.warning(f"Attempted to show buttons for non-existent order_id: {order_id}")
@@ -333,15 +326,14 @@ async def show_buttons(chat_id, context, user_id, order_id, confirmation_message
     
     completed_products = []
     pending_products = []
+    
+    # الحفاظ على الترتيب الأصلي للمنتجات
     for p in order["products"]:
         if p in pricing.get(order_id, {}) and 'buy' in pricing[order_id].get(p, {}) and 'sell' in pricing[order_id].get(p, {}):
             completed_products.append(p)
         else:
             pending_products.append(p)
-            
-    completed_products.sort()
-    pending_products.sort()
-
+    
     buttons_list = []
     for p in completed_products:
         buttons_list.append([InlineKeyboardButton(f"✅ {p}", callback_data=f"{order_id}|{p}")])
@@ -355,7 +347,6 @@ async def show_buttons(chat_id, context, user_id, order_id, confirmation_message
         message_text += f"{confirmation_message}\n\n"
     message_text += f"اضغط على منتج لتحديد سعره من *{order['title']}*:"
 
-    # تحديث أو إرسال رسالة الأزرار
     msg_info = last_button_message.get(order_id)
     if msg_info and str(msg_info.get("chat_id")) == str(chat_id):
         try:
@@ -666,7 +657,21 @@ async def receive_place_count(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     # تحديث عدد المحلات في بيانات الطلب باستخدام الـ target_order_id
     orders[target_order_id]["places_count"] = places
-    context.application.create_task(save_data_in_background(context))
+    
+    # حساب الربح الصافي للطلبية وإضافته للربح التراكمي
+    order = orders[target_order_id]
+    total_buy_order = 0.0
+    total_sell_order = 0.0
+    for p in order["products"]:
+        if p in pricing.get(target_order_id, {}) and "buy" in pricing[target_order_id].get(p, {}) and "sell" in pricing[target_order_id].get(p, {}):
+            total_buy_order += pricing[target_order_id][p]["buy"]
+            total_sell_order += pricing[target_order_id][p]["sell"]
+    net_profit_order = total_sell_order - total_buy_order
+
+    global daily_profit
+    daily_profit += net_profit_order # إضافة ربح الطلبية للربح التراكمي
+
+    context.application.create_task(save_data_in_background(context)) # نحفظ البيانات بعد تحديث الربح التراكمي
 
     # حذف رسائل الحوار السابقة
     if user_id in context.user_data and 'messages_to_delete' in context.user_data[user_id]:
@@ -685,9 +690,6 @@ async def receive_place_count(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 
 async def show_final_options(chat_id, context, user_id, order_id, message_prefix=None):
-    """
-    تعرض فاتورة الزبون ثم الأزرار النهائية بعد اكتمال تسعير الطلب وتحديد عدد المحلات.
-    """
     if order_id not in orders:
         logger.warning(f"Attempted to show final options for non-existent order_id: {order_id}")
         await context.bot.send_message(chat_id=chat_id, text="عذراً، الطلب الذي تحاول الوصول إليه غير موجود أو تم حذفه. الرجاء بدء طلبية جديدة.")
@@ -711,7 +713,7 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
     extra_cost = calculate_extra(current_places)
     final_total = total_sell + extra_cost
 
-    # --- بناء فاتورة الزبون ---
+    # بناء فاتورة الزبون مع الحفاظ على الترتيب
     customer_invoice_lines = []
     customer_invoice_lines.append(f"**أبو الأكبر للتوصيل**") 
     customer_invoice_lines.append(f"رقم الفاتورة: {invoice}")
@@ -719,7 +721,7 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
     customer_invoice_lines.append(f"\n*المواد:*") 
     
     running_total_for_customer = 0.0
-    for p in order["products"]:
+    for p in order["products"]:  # هنا نحافظ على الترتيب الأصلي
         if p in pricing.get(order_id, {}) and "sell" in pricing[order_id].get(p, {}):
             sell = pricing[order_id][p]["sell"]
             running_total_for_customer += sell
@@ -732,7 +734,6 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
     
     customer_final_text = "\n".join(customer_invoice_lines)
 
-    # --- إرسال فاتورة الزبون برسالة منفصلة أولاً ---
     try:
         await context.bot.send_message(
             chat_id=chat_id,
@@ -744,11 +745,8 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
         logger.error(f"Could not send customer invoice as separate message to chat {chat_id}: {e}")
         await context.bot.send_message(chat_id=chat_id, text="عذراً، لم أتمكن من إرسال فاتورة الزبون. الرجاء المحاولة مرة أخرى.")
 
-
-    # --- إنشاء الأزرار النهائية ---
     keyboard = [
         [InlineKeyboardButton("1️⃣ تعديل الأسعار", callback_data=f"edit_prices_{order_id}")],
-        # [InlineKeyboardButton("2️⃣ تعديل المحلات", callback_data=f"edit_places_{order_id}")], # تم إزالة هذا الزر بناءً على طلبك
         [InlineKeyboardButton("3️⃣ إرسال فاتورة الزبون (واتساب)", url=f"https://wa.me/{OWNER_PHONE_NUMBER}?text={customer_final_text.replace(' ', '%20').replace('\n', '%0A').replace('*', '')}")],
         [InlineKeyboardButton("4️⃣ إنشاء طلب جديد", callback_data="start_new_order")]
     ]
@@ -758,11 +756,10 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
     if message_prefix:
         message_text = message_prefix + "\n" + message_text
     
-    # رسالة الإدارة للواتساب
     owner_invoice_details = []
     owner_invoice_details.append(f"رقم الفاتورة: {invoice}")
     owner_invoice_details.append(f"عنوان الزبون: {order['title']}")
-    for p in order["products"]:
+    for p in order["products"]:  # الحفاظ على الترتيب هنا أيضاً
         if p in pricing.get(order_id, {}) and "buy" in pricing[order_id].get(p, {}) and "sell" in pricing[order_id].get(p, {}):
             buy = pricing[order_id][p]["buy"]
             sell = pricing[order_id][p]["sell"] 
@@ -795,27 +792,20 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
         logger.error(f"Could not send admin invoice to OWNER_ID {OWNER_ID}: {e}")
         await context.bot.send_message(chat_id=chat_id, text="عذراً، لم أتمكن من إرسال فاتورة الإدارة إلى خاصك. يرجى التأكد من أنني أستطيع مراسلتك في الخاص (قد تحتاج إلى بدء محادثة معي أولاً).")
 
-    # إرسال الرسالة النهائية مع الأزرار للزبون (هذه الرسالة تحتوي الأزرار فقط)
     await context.bot.send_message(chat_id=chat_id, text=message_text, reply_markup=reply_markup, parse_mode="Markdown")
     
-    # حذف أي رسائل سابقة في user_data['messages_to_delete']
     if user_id in context.user_data: 
         if 'messages_to_delete' in context.user_data[user_id]:
             for msg_info in context.user_data[user_id]['messages_to_delete']:
                 context.application.create_task(delete_message_in_background(context, chat_id=msg_info['chat_id'], message_id=msg_info['message_id']))
             context.user_data[user_id]['messages_to_delete'].clear()
 
-    # بعد عرض الأزرار النهائية، نمسح بيانات المستخدم الخاصة بالطلب الحالي
     if user_id in context.user_data:
         if "order_id" in context.user_data[user_id]:
             del context.user_data[user_id]["order_id"]
         if "product" in context.user_data[user_id]:
             del context.user_data[user_id]["product"]
-        # لا تحذف completed_order_id لأننا قد نحتاجه إذا المستخدم اختار تعديل مرة أخرى
-        # if "completed_order_id" in context.user_data[user_id]:
-        #     del context.user_data[user_id]["completed_order_id"]
         logger.info(f"Cleaned up order-specific user_data for user {user_id} after showing final options.")
-
 
 async def edit_prices(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -1009,7 +999,8 @@ async def show_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"**مجموع البيع الكلي (للطلبات المعالجة):** {format_float(total_sell_all_orders)}\n"
         f"**صافي الربح الكلي (للطلبات المعالجة):** {format_float(total_sell_all_orders - total_buy_all_orders)}\n" 
         f"**الربح التراكمي في البوت (منذ آخر تصفير):** {format_float(daily_profit)} دينار\n\n"
-        f"**--- تفاصيل الطلبات ---**\n" + "\n".join(details)
+        f"**--- تفاصيل الطلبات ---**\n" + "\n".join(details) +
+        f"\n\n**الربح التراكمي الإجمالي:** *{format_float(daily_profit)}* دينار" # ضفت الربح التراكمي هنا
     )
     await update.message.reply_text(result, parse_mode="Markdown")
 
