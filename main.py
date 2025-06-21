@@ -334,9 +334,9 @@ async def process_order(update, context, message, edited=False):
         
     context.application.create_task(save_data_in_background(context))
     
-    # ✅ تعديل رسالة الاستلام لتضمين رقم الهاتف
+    # ✅ تعديل رسالة الاستلام لتضمين رقم الهاتف بالشكل الجديد
     if is_new_order:
-        await message.reply_text(f"استلمت الطلب بعنوان: *{title}* (الرقم: `{phone_number}`) (عدد المنتجات: {len(products)})", parse_mode="Markdown")
+        await message.reply_text(f"طلب : *{title}*\n(الرقم: `{phone_number}` )\n(عدد المنتجات: {len(products)})", parse_mode="Markdown")
         await show_buttons(message.chat_id, context, user_id, order_id)
     else:
         await show_buttons(message.chat_id, context, user_id, order_id, confirmation_message="تم تحديث الطلب. الرجاء التأكد من تسعير أي منتجات جديدة.")
