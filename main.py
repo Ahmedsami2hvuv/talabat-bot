@@ -918,7 +918,7 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
 
         # ✅ فاتورة المجهز (للخاص مال المجهز) - هذا هو الجزء الجديد
         supplier_invoice_details = [
-            f"**فاتورة شراء طلبية (لك):**",
+            f"**فاتورة شراء طلبية (لك يا مجهز):**",
             f"رقم الفاتورة: {invoice}",
             f"عنوان الزبون: {order['title']}",
             f"رقم الزبون: `{phone_number}`",
@@ -1135,11 +1135,12 @@ async def confirm_reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
     pricing = context.application.bot_data['pricing']
     invoice_numbers = context.application.bot_data['invoice_numbers']
     last_button_message = context.application.bot_data['last_button_message']
-    daily_profit = context.application.bot_data['daily_profit'] # الوصول إلى القيمة الحالية قبل التصفير
-    
+    daily_profit = context.application.bot_data['daily_profit'] 
+    supplier_report_timestamps = context.application.bot_data['supplier_report_timestamps'] # ✅ جبنا هذا المتغير
+
     try:
         query = update.callback_query
-        await query.answer()
+        await query.answer() # ✅ هذا السطر مهم جداً حتى يختفي التحميل من الزر
 
         if str(query.from_user.id) != str(OWNER_ID):
             await query.edit_message_text("عذراً، لا تملك صلاحية لتنفيذ هذا الأمر.")
@@ -1153,6 +1154,8 @@ async def confirm_reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pricing.clear()
             invoice_numbers.clear()
             last_button_message.clear()
+            supplier_report_timestamps.clear() # ✅ تصفير سجلات المجهزين
+            
             daily_profit_value = 0.0 # القيمة الجديدة للربح اليومي
 
             try:
@@ -1162,12 +1165,13 @@ async def confirm_reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except Exception as e:
                 logger.error(f"Could not reset invoice counter file: {e}", exc_info=True)
             
-            # تحديث القيم في bot_data بعد التصفير
+            # تحديث القيم في bot_data بعد التصفير (هذا الجزء مهم)
             context.application.bot_data['orders'] = orders
             context.application.bot_data['pricing'] = pricing
             context.application.bot_data['invoice_numbers'] = invoice_numbers
             context.application.bot_data['last_button_message'] = last_button_message
-            context.application.bot_data['daily_profit'] = daily_profit_value # تحديث القيمة المصفّرة
+            context.application.bot_data['daily_profit'] = daily_profit_value
+            context.application.bot_data['supplier_report_timestamps'] = supplier_report_timestamps # ✅ تحديث سجل المجهزين في bot_data
 
             # استدعاء دالة الحفظ العامة لحفظ التغييرات على القرص
             _save_data_to_disk_global_func = context.application.bot_data.get('_save_data_to_disk_global_func')
@@ -1183,7 +1187,7 @@ async def confirm_reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.error(f"[{update.effective_chat.id}] Error in confirm_reset: {e}", exc_info=True)
         await update.callback_query.message.reply_text("عذراً، حدث خطأ أثناء عملية التصفير.")
-
+        
 async def show_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
     orders = context.application.bot_data['orders']
     pricing = context.application.bot_data['pricing']
@@ -1261,24 +1265,25 @@ def main():
     app.bot_data['invoice_numbers'] = invoice_numbers
     app.bot_data['daily_profit'] = daily_profit
     app.bot_data['last_button_message'] = last_button_message
-    app.bot_data['supplier_report_timestamps'] = supplier_report_timestamps # هذا المتغير اللي ضفناه
-    
+    app.bot_data['supplier_report_timestamps'] = supplier_report_timestamps 
+
     # تمرير دوال الحفظ العامة لـ bot_data حتى تتمكن الدوال الأخرى من استدعائها
     app.bot_data['schedule_save_global_func'] = schedule_save_global
     app.bot_data['_save_data_to_disk_global_func'] = _save_data_to_disk_global
 
-
-    # ✅ Handlers خارج المحادثة (كل هاي الأسطر لازم تكون بداخل دالة main())
+    # ✅ Handlers خارج المحادثة (الآن صارت داخل main())
+    # تأكد إنو هاي الأسطر تبدي بـ 4 مسافات فراغ من بداية السطر:
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("profit", show_profit))
-    app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"^(الارباح|ارباح)$"), show_profit)) # ربط "الارباح" و "ارباح"
+    app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"^(الارباح|ارباح)$"), show_profit))
     app.add_handler(CommandHandler("reset", reset_all))
-    app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"^تصفير$"), reset_all)) # للمدير: "تصفير"
-    app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"^صفر$"), reset_supplier_report)) # للمجهز: "صفر"
+    app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"^تصفير$"), reset_all))
+    app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"^صفر$"), reset_supplier_report))
+    app.add_handler(CallbackQueryHandler(confirm_reset, pattern="^(confirm_reset|cancel_reset)$"))
     app.add_handler(CommandHandler("report", show_report))
     app.add_handler(CommandHandler("myreport", show_supplier_report))
-    app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"^(تقاريري|تقريري)$"), show_supplier_report)) # للمجهز: "تقاريري" أو "تقريري"
-    app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"^(التقارير|تقرير|تقارير)$"), show_report)) # للادارة: "التقارير" أو "تقرير" أو "تقارير"
+    app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"^(تقاريري|تقريري)$"), show_supplier_report))
+    app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"^(التقارير|تقرير|تقارير)$"), show_report))
 
     app.add_handler(MessageHandler(filters.UpdateType.EDITED_MESSAGE, edited_message))
     app.add_handler(CallbackQueryHandler(edit_prices, pattern=r"^edit_prices_"))
@@ -1331,8 +1336,7 @@ def main():
     app.add_handler(order_creation_conv_handler)
 
     # ✅ تشغيل البوت
-    app.run_polling(allowed_updates=Update.ALL_TYPES)
-    
+    app.run_polling(allowed_updates=Update.ALL_TYPES)  
 
 async def show_supplier_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
     orders = context.application.bot_data['orders']
@@ -1340,7 +1344,7 @@ async def show_supplier_report(update: Update, context: ContextTypes.DEFAULT_TYP
     supplier_report_timestamps = context.application.bot_data['supplier_report_timestamps']
 
     user_id = str(update.message.from_user.id)
-    report_text = f"**تقرير الطلبيات اللي جهزتها استمر يا بطل:**\n\n"
+    report_text = f"**تقرير الطلبيات اللي جهزتها يا بطل:**\n\n"
     has_orders = False
 
     # جلب آخر وقت تصفير لهذا المجهز (إذا موجود)
