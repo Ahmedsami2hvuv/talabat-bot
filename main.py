@@ -919,7 +919,7 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
         encoded_customer_text = quote(customer_final_text, safe='')
         keyboard = [
             [InlineKeyboardButton("1️⃣ تعدل سعر", callback_data=f"edit_prices_{order_id}")],
-            [InlineKeyboardButton("2️⃣ ترفع الطلب", url="https://d.ksebstor.site/client/96f743f604a4baf145939299")]
+            [InlineKeyboardButton("2️⃣ ترفع الطلب", url="https://d.ksebstor.site/vendors/49aefb89034f23f051cae428")]
         ]
         
         reply_markup = InlineKeyboardMarkup(keyboard)
