@@ -1021,12 +1021,10 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
             logger.error(f"[{chat_id}] Could not send admin invoice to OWNER_ID {OWNER_ID}: {e}")
             await context.bot.send_message(chat_id=chat_id, text="عذراً، لم أتمكن من إرسال فاتورة الإدارة إلى خاصك.")
 
-        # أزرار التحكم
+        # أزرار التحكم المعدلة (تم حذف الزرين المطلوبين)
         keyboard = [
             [InlineKeyboardButton("1️⃣ تعديل الأسعار", callback_data=f"edit_prices_{order_id}")],
-            [InlineKeyboardButton("2️⃣ رفع الطلبية", url="https://d.ksebstor.site/client/96f743f604a4baf145939298")],
-            [InlineKeyboardButton("3️⃣ إرسال فاتورة الزبون (واتساب)", url=f"https://wa.me/{OWNER_PHONE_NUMBER}?text={encoded_customer_text}")],
-            [InlineKeyboardButton("4️⃣ إنشاء طلب جديد", callback_data="start_new_order")]
+            [InlineKeyboardButton("2️⃣ رفع الطلبية", url="https://d.ksebstor.site/client/96f743f604a4baf145939298")]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
 
