@@ -220,6 +220,23 @@ async def delete_message_in_background(context: ContextTypes.DEFAULT_TYPE, chat_
     except Exception as e:
         logger.warning(f"Could not delete message {message_id} from chat {chat_id} in background: {e}.")
 
+# تحميل ملف المناطق واسعارها 
+def load_delivery_zones():
+    try:
+        with open("data/delivery_zones.json", "r") as f:
+            zones = json.load(f)
+            return zones
+    except Exception as e:
+        print(f"Error loading delivery zones: {e}")
+        return {}
+        # استخراج سعر التوصيل بناءً على العنوان
+def get_delivery_price(address):
+    delivery_zones = load_delivery_zones()
+    for zone, price in delivery_zones.items():
+        if zone in address:
+            return price
+    return 0  # إذا لم يتم العثور على العنوان في المناطق
+
 # دالة مساعدة لحفظ البيانات في الخلفية
 async def save_data_in_background(context: ContextTypes.DEFAULT_TYPE):
     schedule_save_global()
@@ -846,7 +863,7 @@ async def handle_places_count_data(update: Update, context: ContextTypes.DEFAULT
                     
                     if order_id_to_process not in orders:
                         logger.error(f"[{chat_id}] Order ID '{order_id_to_process}' from callback data not found in global orders.")
-                        await context.bot.send_message(chat_id=chat_id, text="😐باعلي هيو الطلبية الي ددوس عدد محلاتها ماهيه ولا دكلي وينهيا . تريد سوي طلب جديد")
+                        await context.bot.send_message(chat_id=chat_id, text="باعلي هيو الطلبية الي ددوس عدد محلاتها ماهيه ولا دكلي وينهيا . تريد سوي طلب جديد")
                         if user_id in context.user_data and "current_active_order_id" in context.user_data[user_id]:
                             del context.user_data[user_id]["current_active_order_id"]
                         return ConversationHandler.END 
@@ -949,7 +966,6 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
 
     try:
         logger.info(f"[{chat_id}] Showing final options for order {order_id} to user {user_id}")
-
         if order_id not in orders:
             logger.warning(f"[{chat_id}] Attempted to show final options for non-existent order_id: {order_id}")
             await context.bot.send_message(chat_id=chat_id, text="😐كسهها الطلب مموجود تريد سوي طلب جديد .")
@@ -971,6 +987,9 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
         current_places = order.get("places_count", 0)
         extra_cost_value = calculate_extra(current_places)
         delivery_fee = get_delivery_price(order.get('title', ''))
+        original_delivery_fee = delivery_fee  # القيمة الأصلية لسعر التوصيل
+
+        # إجمالي الفاتورة
         final_total = total_sell + extra_cost_value + delivery_fee
 
         # تحديث الربح اليومي
@@ -992,7 +1011,6 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
         for i, product_name in enumerate(order["products"]):
             if product_name in pricing.get(order_id, {}) and "sell" in pricing[order_id].get(product_name, {}):
                 sell_price = pricing[order_id][product_name]["sell"]
-
                 if i == 0:
                     customer_invoice_lines.append(f"– {product_name} بـ{format_float(sell_price)}")
                     customer_invoice_lines.append(f"• {format_float(sell_price)} 💵")
@@ -1000,35 +1018,32 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
                     prev_total_for_display = current_display_total_sum
                     customer_invoice_lines.append(f"– {product_name} بـ{format_float(sell_price)}")
                     customer_invoice_lines.append(f"• {format_float(prev_total_for_display)}+{format_float(sell_price)}= {format_float(prev_total_for_display + sell_price)} 💵")
-
                 current_display_total_sum += sell_price
             else:
                 customer_invoice_lines.append(f"– {product_name} (لم يتم تسعيره)")
 
-        # إضافة كلفة التجهيز
+        # إضافة رسوم التجهيز
         if extra_cost_value > 0:
             prev_total_for_display = current_display_total_sum
             customer_invoice_lines.append(f"– 📦 التجهيز: من {current_places} محلات بـ {format_float(extra_cost_value)}")
             customer_invoice_lines.append(f"• {format_float(prev_total_for_display)}+{format_float(extra_cost_value)}= {format_float(prev_total_for_display + extra_cost_value)} 💵")
             current_display_total_sum += extra_cost_value
 
-        # إضافة أجرة التوصيل
+        # إضافة أجرة التوصيل إلى الفاتورة
         display_delivery_fee_customer = original_delivery_fee
         if current_places in [1, 2]:
-            display_delivery_fee_customer = 0
+            display_delivery_fee_customer = original_delivery_fee  # لا نجعله 0 حتى لو عدد المحلات 1 أو 2
 
-        if display_delivery_fee_customer == 0 and original_delivery_fee != 0:
+        if display_delivery_fee_customer > 0:
             prev_total_for_display = current_display_total_sum
             customer_invoice_lines.append(f"– 🚚 التوصيل: بـ {format_float(display_delivery_fee_customer)}")
             customer_invoice_lines.append(f"• {format_float(prev_total_for_display)}+{format_float(display_delivery_fee_customer)}= {format_float(prev_total_for_display + display_delivery_fee_customer)} 💵")
             current_display_total_sum += display_delivery_fee_customer
-        elif original_delivery_fee > 0:
-            prev_total_for_display = current_display_total_sum
-            customer_invoice_lines.append(f"– 🚚 التوصيل: بـ {format_float(original_delivery_fee)}")
-            customer_invoice_lines.append(f"• {format_float(prev_total_for_display)}+{format_float(original_delivery_fee)}= {format_float(prev_total_for_display + original_delivery_fee)} 💵")
-            current_display_total_sum += original_delivery_fee
+        else:
+            customer_invoice_lines.append(f"– 🚚 التوصيل: بـ 0")
+            customer_invoice_lines.append(f"• {format_float(current_display_total_sum)}+0= {format_float(current_display_total_sum)} 💵")
 
-
+        # إضافة المجموع الكلي
         customer_invoice_lines.extend([
             "-----------------------------------",
             "✨ المجموع الكلي: ✨",
@@ -1049,7 +1064,7 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
         except Exception as e:
             logger.error(f"[{chat_id}] Could not send customer invoice: {e}")
 
-        # فاتورة المجهز (نفس الكود السابق...)
+        # فاتورة المجهز
         supplier_invoice = [
             f"**فاتورة الشراء:🧾💸**",
             f"رقم الفاتورة🔢: {invoice}",
@@ -1057,14 +1072,12 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
             f"رقم الزبون📞: `{phone_number}`",
             "\n*تفاصيل الشراء:🗒️💸*"
         ]
-
         for p_name in order["products"]:
             if p_name in pricing.get(order_id, {}) and "buy" in pricing[order_id][p_name]:
                 buy = pricing[order_id][p_name]["buy"]
                 supplier_invoice.append(f"  - {p_name}: {format_float(buy)}")
             else:
                 supplier_invoice.append(f"  - {p_name}: (ترا ماحددت بيش اشتريت)")
-
         supplier_invoice.append(f"\n*مجموع كلفة الشراء للطلبية:💸* {format_float(total_buy)}")
 
         try:
@@ -1076,7 +1089,7 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
         except Exception as e:
             logger.error(f"[{chat_id}] Could not send supplier invoice: {e}")
 
-        # فاتورة الإدارة (نفس الكود السابق...)
+        # فاتورة الإدارة
         owner_invoice = [
             f"**فاتورة الإدارة:👨🏻‍💼**",
             f"رقم الفاتورة🔢: {invoice}",
@@ -1084,7 +1097,6 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
             f"عنوان الزبون🏠: {order['title']}",
             "\n*تفاصيل الطلبية:🗒*"
         ]
-
         for p_name in order["products"]:
             if p_name in pricing.get(order_id, {}) and "buy" in pricing[order_id][p_name] and "sell" in pricing[order_id][p_name]:
                 buy = pricing[order_id][p_name]["buy"]
@@ -1093,7 +1105,6 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
                 owner_invoice.append(f"- {p_name}: شراء {format_float(buy)} | بيع {format_float(sell)} | ربح {format_float(profit)}")
             else:
                 owner_invoice.append(f"- {p_name}: (غير مسعر)")
-
         owner_invoice.extend([
             f"\n*إجمالي الشراء:💸* {format_float(total_buy)}",
             f"*إجمالي البيع:💵 * {format_float(total_sell)}",
@@ -1116,11 +1127,8 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
         encoded_customer_text = quote(customer_final_text, safe='')
         keyboard = [
             [InlineKeyboardButton("1️⃣ تعدل سعر", callback_data=f"edit_prices_{order_id}")],
-            [InlineKeyboardButton("2️⃣ ترفع الطلب", url="https://d.ksebstor.site/client/96f743f604a4baf145939299")], # Fixed URL
-            [InlineKeyboardButton("3️⃣ إرسال فاتورة الزبون (واتساب)", url=f"https://wa.me/{OWNER_PHONE_NUMBER}?text={encoded_customer_text}")],
-            [InlineKeyboardButton("4️⃣ إنشاء طلب جديد", callback_data="start_new_order")]
+            [InlineKeyboardButton("2️⃣ ترفع الطلب", url="https://d.ksebstor.site/client/96f743f604a4baf145939298 ")],  # Fixed URL
         ]
-
         reply_markup = InlineKeyboardMarkup(keyboard)
         message_text = "صلوات كملت 😏!\nدختار من الخيارات ابو العريف :"
         if message_prefix:
@@ -1466,21 +1474,22 @@ def main():
     # ConversationHandler لمسح الطلبية
     delete_order_conv_handler = ConversationHandler(
         entry_points=[
-            MessageHandler(filters.TEXT & filters.Regex(r"^(مسح)$"), delete_order_command), # أمر مسح الطلبية بالعربي
-            CommandHandler("delete_order", delete_order_command), # أمر مسح الطلبية بالإنكليزي
+            MessageHandler(filters.TEXT & filters.Regex(r"^(مسح)$"), delete_order_command),
+            CommandHandler("delete_order", delete_order_command),
         ],
         states={
             ASK_CUSTOMER_PHONE_NUMBER_FOR_DELETION: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, receive_customer_phone_for_deletion),
             ],
             ASK_FOR_DELETION_CONFIRMATION: [
-                CallbackQueryHandler(confirm_delete_order_callback, pattern=r"^confirm_delete_order_.*$"),
-                CallbackQueryHandler(cancel_delete_order_callback, pattern=r"^cancel_delete_order$"),
+                # هذا هو الجزء الذي يحتاج إلى التعديل النهائي والدقيق
+                CallbackQueryHandler(handle_order_selection_for_deletion, 
+                                 pattern=r"^(select_order_to_delete_.*|confirm_final_delete_.*|cancel_delete_order|cancel_delete_order_final_selection)$"),
             ],
         },
         fallbacks=[
             CommandHandler("cancel", lambda u, c: ConversationHandler.END),
-            MessageHandler(filters.ALL, lambda u, c: ConversationHandler.END)
+            MessageHandler(filters.ALL & ~filters.COMMAND, lambda u, c: ConversationHandler.END) 
         ]
     )
     app.add_handler(delete_order_conv_handler)
@@ -1595,11 +1604,14 @@ async def delete_order_command(update: Update, context: ContextTypes.DEFAULT_TYP
 
     if user_id != str(OWNER_ID):
         await update.message.reply_text("😏لاتاكل خره ماتكدر تسوي هالشي. هذا الأمر متاح للمالك فقط.")
-        return ConversationHandler.END # ننهي المحادثة إذا مو المالك
+        return ConversationHandler.END
 
     await update.message.reply_text("تمام، دزلي رقم الزبون للطلبية اللي تريد تمسحها:")
-    context.user_data[user_id]["deleting_order"] = True # علامة لتدل على أننا في عملية مسح طلبية
-    return ASK_CUSTOMER_PHONE_NUMBER_FOR_DELETION # ننتقل لحالة المحادثة لطلب رقم الزبون
+    context.user_data[user_id] = {"deleting_order": True}  # إعادة تهيئة user_data
+    return ASK_CUSTOMER_PHONE_NUMBER_FOR_DELETION
+
+
+
 
 async def receive_customer_phone_for_deletion(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.message.from_user.id)
@@ -1614,100 +1626,145 @@ async def receive_customer_phone_for_deletion(update: Update, context: ContextTy
         context.user_data[user_id].pop("deleting_order", None)
         return ConversationHandler.END
 
-    # البحث عن الطلبية بواسطة رقم الزبون
-    order_to_delete_id = None
-    order_details_text = "ما لكييت طلبية لهذا الزبون."
-
-    # البحث في الطلبيات الموجودة حالياً
+    # البحث عن جميع الطلبات لهذا الرقم سواء مكتملة أو غير مكتملة
     found_orders = {oid: o for oid, o in orders.items() if o.get("phone_number") == customer_phone_number}
 
-    if found_orders:
-        # نختار آخر طلبية لهذا الرقم (أو نطلب من المستخدم يختار إذا اكو هواي)
-        # حالياً، راح ناخذ أول طلبية نلكاها
-        order_to_delete_id = list(found_orders.keys())[0]
-        found_order = found_orders[order_to_delete_id]
+    if not found_orders:
+        await update.message.reply_text("ما لكييت أي طلبية لهذا الرقم.")
+        context.user_data[user_id].pop("deleting_order", None)
+        return ConversationHandler.END
 
-        # بناء تفاصيل الطلبية للعرض قبل المسح
-        invoice = invoice_numbers.get(order_to_delete_id, "غير معروف")
-        order_details_text = (
-            f"لكيت طلبية رقم #{invoice} لهذا الزبون:\n"
-            f"العنوان: {found_order.get('title', 'غير متوفر')}\n"
-            f"المنتجات: {', '.join(found_order.get('products', []))}\n"
-            f"متأكد تريد تمسح هاي الطلبية؟ هذا الإجراء ما بي رجعة."
+    orders_list_details = []
+    keyboard_buttons = []
+
+    # ترتيب الطلبات حسب تاريخ الإنشاء (الأحدث أولاً)
+    sorted_orders_items = sorted(found_orders.items(), key=lambda item: item[1].get('created_at', ''), reverse=True)
+
+    # حفظ الطلبيات المطابقة في user_data ليتعامل معها handle_order_selection_for_deletion
+    context.user_data[user_id]["matching_order_ids"] = [oid for oid, _ in sorted_orders_items]
+
+    for i, (oid, order_data) in enumerate(sorted_orders_items):
+        invoice = invoice_numbers.get(oid, "غير معروف")
+        is_priced = all(p in pricing.get(oid, {}) and 'buy' in pricing[oid].get(p, {}) and 'sell' in pricing[oid].get(p, {}) for p in order_data.get("products", []))
+        status = "مكتملة التسعير" if is_priced else "غير مكتملة التسعير"
+
+        orders_list_details.append(
+            f"🔹 *الفاتورة رقم #{invoice}* ({status})\n"
+            f"    العنوان: {order_data.get('title', 'غير متوفر')}\n"
+            f"    المنتجات: {', '.join(order_data.get('products', []))}"
+        )
+        # هنا سنستخدم "select_order_to_delete_{order_id}" مباشرة
+        # وستقوم دالة handle_order_selection_for_deletion بتأكيد الحذف
+        keyboard_buttons.append(
+            [InlineKeyboardButton(f"مسح الفاتورة #{invoice} ({status})", callback_data=f"select_order_to_delete_{oid}")]
         )
 
-    if order_to_delete_id:
-        context.user_data[user_id]["order_id_to_delete"] = order_to_delete_id # نحفظ الـ ID للتأكيد
-        confirm_keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("✅ اي، امسحها", callback_data=f"confirm_delete_order_{order_to_delete_id}")],
-            [InlineKeyboardButton("❌ لا، بطلت", callback_data=f"cancel_delete_order")]
-        ])
-        await update.message.reply_text(order_details_text, reply_markup=confirm_keyboard, parse_mode="Markdown")
-        return ASK_FOR_DELETION_CONFIRMATION # ننتقل لحالة المحادثة لانتظار التأكيد
-    else:
-        await update.message.reply_text(order_details_text) # "ما لكييت طلبية..."
-        context.user_data[user_id].pop("deleting_order", None)
-        return ConversationHandler.END
+    keyboard_buttons.append([InlineKeyboardButton("❌ إلغاء العملية", callback_data="cancel_delete_order")])
 
-async def confirm_delete_order_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        f"تم العثور على {len(found_orders)} طلبية لهذا الرقم:\n\n" +
+        "\n\n".join(orders_list_details) +
+        "\n\nاختر الفاتورة التي تريد مسحها:",
+        reply_markup=InlineKeyboardMarkup(keyboard_buttons),
+        parse_mode="Markdown"
+    )
+    return ASK_FOR_DELETION_CONFIRMATION
+
+
+
+async def handle_order_selection_for_deletion(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
 
     user_id = str(query.from_user.id)
     chat_id = query.message.chat_id
+    data = query.data
 
-    # التأكد من أن المستخدم يمتلك صلاحيات المالك
     if user_id != str(OWNER_ID):
-        await query.edit_message_text("😏لاتاكل خره ماتكدر تسوي هالشي.")
+        await query.edit_message_text("عذراً، لا تملك صلاحية لتنفيذ هذا الأمر.")
         context.user_data[user_id].pop("deleting_order", None)
-        context.user_data[user_id].pop("order_id_to_delete", None)
         return ConversationHandler.END
 
-    order_id_to_delete = context.user_data[user_id].get("order_id_to_delete")
-
-    if not order_id_to_delete or order_id_to_delete not in orders:
-        logger.warning(f"[{chat_id}] Order ID to delete not found in user_data or orders for user {user_id}.")
-        await query.edit_message_text("ترا ما لكيت الطلبية اللي جنت دحاول تمسحها. يمكن انمسحت من قبل.")
+    # إذا ضغط المستخدم على زر إلغاء العملية
+    if data == "cancel_delete_order":
+        await query.edit_message_text("تم إلغاء عملية مسح الطلبية.")
         context.user_data[user_id].pop("deleting_order", None)
-        context.user_data[user_id].pop("order_id_to_delete", None)
+        context.user_data[user_id].pop("matching_order_ids", None)
         return ConversationHandler.END
 
-    try:
-        # حذف الطلبية من الـ orders
-        del orders[order_id_to_delete]
-        # حذف أسعار الطلبية من الـ pricing
-        if order_id_to_delete in pricing:
-            del pricing[order_id_to_delete]
-        # حذف رقم الفاتورة (إذا كان موجود)
-        if order_id_to_delete in invoice_numbers:
-            del invoice_numbers[order_id_to_delete]
+    # إذا ضغط المستخدم على زر اختيار طلبية من القائمة
+    if data.startswith("select_order_to_delete_"):
+        order_id_to_confirm = data.replace("select_order_to_delete_", "")
+        
+        if order_id_to_confirm not in orders:
+            await query.edit_message_text("الطلبية غير موجودة أو تم حذفها مسبقاً.")
+            context.user_data[user_id].pop("deleting_order", None)
+            context.user_data[user_id].pop("matching_order_ids", None)
+            return ConversationHandler.END
 
-        context.application.create_task(save_data_in_background(context)) # حفظ التغييرات
+        # حفظ order_id للتأكيد النهائي
+        context.user_data[user_id]["order_id_to_delete_final"] = order_id_to_confirm
 
-        logger.info(f"[{chat_id}] Order {order_id_to_delete} deleted successfully by user {user_id}.")
-        await query.edit_message_text(f"تم مسح الطلبية رقم `{invoice_numbers.get(order_id_to_delete, 'القديمة')}` بنجاح!.") # نستخدم رقم الفاتورة الأصلي قبل المسح
-    except Exception as e:
-        logger.error(f"[{chat_id}] Error deleting order {order_id_to_delete}: {e}", exc_info=True)
-        await query.edit_message_text("عذراً، صار خطأ أثناء مسح الطلبية.")
+        invoice_num = invoice_numbers.get(order_id_to_confirm, "غير معروف")
+        confirm_keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("✅ نعم، امسحها", callback_data=f"confirm_final_delete_{order_id_to_confirm}")],
+            [InlineKeyboardButton("❌ لا، بطلت", callback_data="cancel_delete_order_final_selection")] # زر إلغاء بعد الاختيار
+        ])
+        await query.edit_message_text(
+            f"هل أنت متأكد من مسح الفاتورة رقم `{invoice_num}`؟ هذا الإجراء لا يمكن التراجع عنه.",
+            reply_markup=confirm_keyboard,
+            parse_mode="Markdown"
+        )
+        return ASK_FOR_DELETION_CONFIRMATION # البقاء في نفس الحالة لانتظار التأكيد النهائي
 
-    context.user_data[user_id].pop("deleting_order", None)
-    context.user_data[user_id].pop("order_id_to_delete", None)
-    return ConversationHandler.END
+    # إذا ضغط المستخدم على زر التأكيد النهائي للحذف
+    if data.startswith("confirm_final_delete_"):
+        order_id_to_delete = data.replace("confirm_final_delete_", "")
 
+        # تحقق مرة أخرى من order_id_to_delete_final لضمان أننا نمسح الطلب الصحيح
+        if context.user_data[user_id].get("order_id_to_delete_final") != order_id_to_delete:
+            logger.warning(f"[{chat_id}] Mismatch in order ID for final deletion confirmation. Expected {context.user_data[user_id].get('order_id_to_delete_final')}, got {order_id_to_delete}.")
+            await query.edit_message_text("حدث خطأ، الطلبية المحددة للحذف غير مطابقة. الرجاء المحاولة مرة أخرى.")
+            context.user_data[user_id].pop("deleting_order", None)
+            context.user_data[user_id].pop("matching_order_ids", None)
+            context.user_data[user_id].pop("order_id_to_delete_final", None)
+            return ConversationHandler.END
 
-async def cancel_delete_order_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
+        # تنفيذ الحذف
+        try:
+            invoice_number_to_display = invoice_numbers.get(order_id_to_delete, "غير معروف")
+            if order_id_to_delete in orders:
+                del orders[order_id_to_delete]
+            if order_id_to_delete in pricing:
+                del pricing[order_id_to_delete]
+            if order_id_to_delete in invoice_numbers:
+                del invoice_numbers[order_id_to_delete]
+            if order_id_to_delete in last_button_message: # حذف رسالة الزر من السجل إذا كانت موجودة
+                del last_button_message[order_id_to_delete]
 
-    user_id = str(query.from_user.id)
-    chat_id = query.message.chat_id
+            context.application.create_task(save_data_in_background(context))
 
-    logger.info(f"[{chat_id}] Cancel delete order button clicked by user {user_id}.")
+            logger.info(f"[{chat_id}] Order {order_id_to_delete} deleted successfully by user {user_id}.")
+            await query.edit_message_text(f"تم مسح الطلبية رقم `{invoice_number_to_display}` بنجاح!")
+        except Exception as e:
+            logger.error(f"[{chat_id}] Error deleting order {order_id_to_delete}: {e}", exc_info=True)
+            await query.edit_message_text("عذراً، صار خطأ أثناء مسح الطلبية.")
 
-    await query.edit_message_text("تم إلغاء عملية مسح الطلبية.")
+        context.user_data[user_id].pop("deleting_order", None)
+        context.user_data[user_id].pop("matching_order_ids", None)
+        context.user_data[user_id].pop("order_id_to_delete_final", None)
+        return ConversationHandler.END
+    
+    # التعامل مع إلغاء الاختيار النهائي بعد اختيار طلبية
+    if data == "cancel_delete_order_final_selection":
+        await query.edit_message_text("تم إلغاء عملية مسح الطلبية.")
+        context.user_data[user_id].pop("deleting_order", None)
+        context.user_data[user_id].pop("matching_order_ids", None)
+        context.user_data[user_id].pop("order_id_to_delete_final", None)
+        return ConversationHandler.END
 
-    context.user_data[user_id].pop("deleting_order", None)
-    context.user_data[user_id].pop("order_id_to_delete", None)
+    logger.warning(f"[{chat_id}] Unhandled callback_data in handle_order_selection_for_deletion: {data}")
+    await query.edit_message_text("خطأ غير متوقع. الرجاء المحاولة مرة أخرى.")
     return ConversationHandler.END
     
     
