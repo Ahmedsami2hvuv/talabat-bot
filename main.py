@@ -1068,31 +1068,41 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
         except Exception as e:
             logger.error(f"[{chat_id}] Could not send customer invoice: {e}")
 
-        # فاتورة المجهز
-        supplier_invoice = [
-            f"**فاتورة الشراء:🧾💸**",
-            f"رقم الفاتورة🔢: {invoice}",
-            f"عنوان الزبون🏠: {order['title']}",
-            f"رقم الزبون📞: `{phone_number}`",
-            "\n*تفاصيل الشراء:🗒️💸*"
-        ]
-        for p_name in order["products"]:
-            if p_name in pricing.get(order_id, {}) and "buy" in pricing[order_id][p_name]:
-                buy = pricing[order_id][p_name]["buy"]
-                supplier_invoice.append(f"  - {p_name}: {format_float(buy)}")
-            else:
-                supplier_invoice.append(f"  - {p_name}: (ترا ماحددت بيش اشتريت)")
-        supplier_invoice.append(f"\n*مجموع كلفة الشراء للطلبية:💸* {format_float(total_buy)}")
+        # فاتورة المجهز (التي تذهب للخاص)
+supplier_invoice = [
+    f"**فاتورة الشراء:🧾💸**",
+    f"رقم الفاتورة🔢: {invoice}",
+    f"عنوان الزبون🏠: {order['title']}",
+    f"رقم الزبون📞: `{phone_number}`",
+    "\n*تفاصيل الشراء:🗒️💸*"
+]
+for p_name in order["products"]:
+    if p_name in pricing.get(order_id, {}) and "buy" in pricing[order_id][p_name]:
+        buy = pricing[order_id][p_name]["buy"]
+        supplier_invoice.append(f"  - {p_name}: {format_float(buy)}")
+    else:
+        supplier_invoice.append(f"  - {p_name}: (ترا ماحددت بيش اشتريت)")
+supplier_invoice.append(f"\n*مجموع كلفة الشراء للطلبية:💸* {format_float(total_buy)}")
 
-        try:
-            await context.bot.send_message(
-                chat_id=user_id,
-                text="\n".join(supplier_invoice),
-                parse_mode="Markdown"
-            )
-        except Exception as e:
-            logger.error(f"[{chat_id}] Could not send supplier invoice: {e}")
+# إرسال فاتورة الشراء للمجهز
+try:
+    await context.bot.send_message(
+        chat_id=user_id,
+        text="\n".join(supplier_invoice),
+        parse_mode="Markdown"
+    )
+except Exception as e:
+    logger.error(f"[{chat_id}] Could not send supplier invoice: {e}")
 
+# ⭐⭐ التعديل: إرسال فاتورة الشراء للمدير أيضاً ⭐⭐
+try:
+    await context.bot.send_message(
+        chat_id=OWNER_ID,
+        text="\n".join(supplier_invoice),
+        parse_mode="Markdown"
+    )
+except Exception as e:
+    logger.error(f"[{chat_id}] Could not send supplier invoice to owner: {e}")
         # فاتورة الإدارة
         owner_invoice = [
             f"**فاتورة الإدارة:👨🏻‍💼**",
@@ -1483,6 +1493,13 @@ def main():
     # استجابة نصية "مناطق" أو "المناطق"
     app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"^(مناطق|المناطق)$"), list_zones))
 
+    # إضافة الأمر لعرض الطلبات غير المكتملة
+    app.add_handler(CommandHandler("incomplete", show_incomplete_orders))
+    app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"^(طلبات غير مكتملة|طلبات ناقصة)$"), show_incomplete_orders))
+
+   # إضافة handler لأزرار الطلبات غير المكتملة
+   app.add_handler(CallbackQueryHandler(handle_incomplete_order_selection, pattern=r"^(load_incomplete_|cancel_incomplete)"))
+
     # ConversationHandler لعدد المحلات
     places_conv_handler = ConversationHandler(
         entry_points=[
@@ -1795,6 +1812,100 @@ async def handle_order_selection_for_deletion(update: Update, context: ContextTy
 
     logger.warning(f"[{chat_id}] Unhandled callback_data in handle_order_selection_for_deletion: {data}")
     await query.edit_message_text("خطأ غير متوقع. الرجاء المحاولة مرة أخرى.")
+    return ConversationHandler.END
+
+async def show_incomplete_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """عرض الطلبات غير المكتملة على شكل أزرار"""
+    try:
+        user_id = str(update.effective_user.id)
+        chat_id = update.effective_chat.id
+        
+        # البحث عن الطلبات غير المكتملة
+        incomplete_orders = {}
+        for order_id, order in orders.items():
+            # التحقق إذا كانت الطلبية غير مكتملة (أي منتج لم يتم تسعيره)
+            is_complete = True
+            for p_name in order.get("products", []):
+                if p_name not in pricing.get(order_id, {}) or "buy" not in pricing[order_id].get(p_name, {}) or "sell" not in pricing[order_id].get(p_name, {}):
+                    is_complete = False
+                    break
+            
+            if not is_complete:
+                incomplete_orders[order_id] = order
+        
+        if not incomplete_orders:
+            await update.message.reply_text("🎉 لا توجد طلبات غير مكتملة حالياً!")
+            return
+        
+        # إنشاء أزرار للطلبات غير المكتملة
+        buttons = []
+        for order_id, order in incomplete_orders.items():
+            title = order.get("title", "بدون عنوان")
+            phone = order.get("phone_number", "بدون رقم")
+            buttons.append([InlineKeyboardButton(f"{title} ({phone})", callback_data=f"load_incomplete_{order_id}")])
+        
+        # إضافة زر الإلغاء
+        buttons.append([InlineKeyboardButton("❌ إلغاء", callback_data="cancel_incomplete")])
+        
+        markup = InlineKeyboardMarkup(buttons)
+        
+        await update.message.reply_text(
+            f"الطلبات غير المكتملة ({len(incomplete_orders)}):\nاختر طلبية لتحميلها:",
+            reply_markup=markup
+        )
+        
+    except Exception as e:
+        logger.error(f"Error in show_incomplete_orders: {e}")
+        await update.message.reply_text("❌ حدث خطأ في عرض الطلبات غير المكتملة")
+
+async def handle_incomplete_order_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالجة اختيار طلبية غير مكتملة"""
+    try:
+        query = update.callback_query
+        await query.answer()
+        
+        if query.data == "cancel_incomplete":
+            await query.edit_message_text("تم إلغاء عملية تحميل الطلبات.")
+            return
+        
+        if query.data.startswith("load_incomplete_"):
+            order_id = query.data.replace("load_incomplete_", "")
+            user_id = str(query.from_user.id)
+            
+            if order_id not in orders:
+                await query.edit_message_text("❌ هذه الطلبية لم تعد موجودة.")
+                return
+            
+            # حذف رسالة القائمة
+            await query.message.delete()
+            
+            # عرض الطلبية المحددة بأزرارها
+            await show_buttons(query.message.chat_id, context, user_id, order_id, 
+                             confirmation_message="تم تحميل الطلبية غير المكتملة:")
+            
+    except Exception as e:
+        logger.error(f"Error in handle_incomplete_order_selection: {e}")
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = str(update.message.from_user.id)
+    logger.info(f"[{update.effective_chat.id}] /start command from user {user_id}. User data before clearing: {json.dumps(context.user_data.get(user_id, {}), indent=2)}")
+    if user_id in context.user_data:
+        context.user_data[user_id].pop("order_id", None)
+        context.user_data[user_id].pop("product", None)
+        context.user_data[user_id].pop("current_active_order_id", None)
+        context.user_data[user_id].pop("messages_to_delete", None) 
+        context.user_data[user_id].pop("buy_price", None)
+        logger.info(f"Cleared order-specific user_data for user {user_id} on /start command. User data after clearing: {json.dumps(context.user_data.get(user_id, {}), indent=2)}")
+    
+    # ⭐⭐ إضافة زر دائم للطلبات غير المكتملة ⭐⭐
+    reply_keyboard = [['طلبات غير مكتملة']]
+    markup = ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True)
+    
+    await update.message.reply_text(
+        "أهلاً بك يا أبا الأكبر! لإعداد طلبية، دز الطلبية كلها برسالة واحدة.\n\n*السطر الأول:* عنوان الزبون.\n*السطر الثاني:* رقم هاتف الزبون.\n*الأسطر الباقية:* كل منتج بسطر واحد.", 
+        parse_mode="Markdown",
+        reply_markup=markup
+    )
     return ConversationHandler.END
     
     
