@@ -254,10 +254,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data[user_id].pop("buy_price", None)
         logger.info(f"Cleared order-specific user_data for user {user_id} on /start command. User data after clearing: {json.dumps(context.user_data.get(user_id, {}), indent=2)}")
     
-    # زر دائم للطلبات غير المكتملة
+    # ⭐⭐ زر دائم للطلبات غير المكتملة ⭐⭐
     from telegram import ReplyKeyboardMarkup
     reply_keyboard = [['الطلبات']]
-    markup = ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True)
+    markup = ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True, input_field_placeholder='اختر "الطلبات"')
     
     await update.message.reply_text(
         "أهلاً بك يا أبا الأكبر! لإعداد طلبية، دز الطلبية كلها برسالة واحدة.\n\n*السطر الأول:* عنوان الزبون.\n*السطر الثاني:* رقم هاتف الزبون.\n*الأسطر الباقية:* كل منتج بسطر واحد.", 
@@ -1513,7 +1513,7 @@ def main():
 
     # ⭐⭐ إضافة الأمر لعرض الطلبات غير المكتملة ⭐⭐
     app.add_handler(CommandHandler("incomplete", show_incomplete_orders))
-    app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"^(طلبات غير مكتملة|طلبات ناقصة|الطلبات)$"), show_incomplete_orders))
+    app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"^(طلبات|الطلبات|طلبات غير مكتملة|طلبات ناقصة)$"), show_incomplete_orders))
 
     # ⭐⭐ إضافة handler لأزرار الطلبات غير المكتملة ⭐⭐
     app.add_handler(CallbackQueryHandler(handle_incomplete_order_selection, pattern=r"^(load_incomplete_|cancel_incomplete)"))
