@@ -676,12 +676,12 @@ async def cancel_delete_product_callback(update: Update, context: ContextTypes.D
     await show_buttons(chat_id, context, user_id, order_id)
     return ConversationHandler.END
 
-    
 async def receive_buy_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """استلام سعر الشراء وسعر البيع لمنتج معين من المجهز.
     يقبل:
     1. سطرين منفصلين (سطر للشراء، سطر للبيع).
     2. سطر واحد (يُعتبر شراء وبيع).
+    3. القيمة صفر (0) لتسجيل المنتج كغير متوفر.
     """
     user_id = str(update.message.from_user.id)
     chat_id = update.effective_chat.id
@@ -703,28 +703,26 @@ async def receive_buy_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("❌ لم يتم تحديد طلبية أو منتج. يرجى البدء من جديد.")
             return ConversationHandler.END
 
-        # ✅ الإضافة الجديدة: حفظ رسالة المستخدم الحالية للحذف (هذا هو الحل!)
+        # حفظ رسالة المستخدم الحالية للحذف
         context.user_data.setdefault(user_id, {}).setdefault('messages_to_delete', []).append({
             'chat_id': update.message.chat_id, 
             'message_id': update.message.message_id
         })
         
         # ------------------------------------------------------------------
-        # 🔄 المنطق المُحدَّث لتحليل المدخلات: يدعم سطرين أو سطر واحد
+        # 🔄 المنطق لتحليل المدخلات: يدعم سطرين أو سطر واحد
         # ------------------------------------------------------------------
-        # تقسيم النص المدخل على أساس فواصل الأسطر ثم تصفية الأسطر الفارغة
         lines = [line.strip() for line in update.message.text.split('\n') if line.strip()]
         
-        # محاولة تحليل القيم
         buy_price_str = None
         sell_price_str = None
 
         if len(lines) == 2:
-            # الحالة الطبيعية: سطرين منفصلين (شراء ثم بيع)
+            # الحالة الطبيعية: سطرين منفصلين
             buy_price_str = lines[0]
             sell_price_str = lines[1]
         elif len(lines) == 1:
-            # التعديل المطلوب: سطر واحد (شراء = بيع) أو (شراء وبيع مفصولين بمسافة)
+            # حالة سطر واحد: قيمة واحدة (شراء=بيع) أو قيمتين بمسافة
             parts = [p.strip() for p in lines[0].split() if p.strip()]
             
             if len(parts) == 2:
@@ -736,7 +734,6 @@ async def receive_buy_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                  buy_price_str = None 
         
-        # التحقق من أننا حصلنا على القيمتين
         if not buy_price_str or not sell_price_str:
             msg_error = await update.message.reply_text("😒دكتب عدل دخل سعر الشراء بالسطر الأول وسعر البيع بالسطر الثاني.\nأو سعر واحد فقط في سطر واحد إذا كانا متساويين.")
             context.user_data[user_id]['messages_to_delete'].append({
@@ -750,8 +747,9 @@ async def receive_buy_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
             buy_price = float(buy_price_str)
             sell_price = float(sell_price_str)
         
-            if buy_price <= 0 or sell_price <= 0:
-                raise ValueError("الأسعار يجب أن تكون أرقاماً موجبة.")
+            # ✅ التعديل هنا: السماح بالصفر لكن منع القيم السالبة
+            if buy_price < 0 or sell_price < 0:
+                raise ValueError("الأسعار لا يمكن أن تكون سالبة.")
 
         except ValueError as e:
             logger.error(f"[{update.effective_chat.id}] Buy/Sell prices: ValueError for user {user_id} with input '{update.message.text}': {e}", exc_info=True)
@@ -800,7 +798,7 @@ async def receive_buy_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
             'message_id': msg_error.message_id
         })
         return ConversationHandler.END
-
+        
 async def receive_new_product_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.effective_user.id)
     chat_id = update.effective_chat.id
