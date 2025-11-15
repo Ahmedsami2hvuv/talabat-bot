@@ -1988,9 +1988,10 @@ async def handle_incomplete_order_selection(update: Update, context: ContextType
             customer_number_display = order.get("phone_number", "غير متوفر")
             zone_name_display = order.get("title", "غير متوفرة") 
             
+            # ✅ التعديل هنا: استخدام تنسيق `Inline Code` (علامة `) حول رقم الزبون
             confirmation_message = (
                 f"تم تحميل الطلبية غير المكتملة:\n"
-                f"👤 رقم الزبون: *{customer_number_display}*\n"
+                f"📞 رقم الزبون: `{customer_number_display}`\n"
                 f"📌 عنوان الطلب: *{zone_name_display}*"
             )
 
