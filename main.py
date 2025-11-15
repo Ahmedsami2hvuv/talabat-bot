@@ -680,6 +680,8 @@ async def confirm_delete_product_by_button_callback(update: Update, context: Con
     await show_buttons(chat_id, context, user_id, order_id) 
     return ConversationHandler.END
 
+
+
 async def cancel_add_product_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -1951,7 +1953,7 @@ async def show_incomplete_orders(update: Update, context: ContextTypes.DEFAULT_T
 
 async def handle_incomplete_order_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """معالجة اختيار طلبية غير مكتملة"""
-    # ✅ الوصول إلى 'orders' من الذاكرة المشتركة للبوت (مهم جداً)
+    # الوصول إلى 'orders' من الذاكرة المشتركة للبوت
     orders = context.application.bot_data.get('orders', {}) 
     
     try:
@@ -1980,14 +1982,16 @@ async def handle_incomplete_order_selection(update: Update, context: ContextType
             except:
                 pass
             
-            # ✅ التعديل الرئيسي: استخدام .get() بأمان لمنع KeyError
-            customer_number = order.get("customer_number", "غير متوفر")
-            zone_name = order.get("zone_name", "غير متوفرة") # هذا يمنع الخطأ Key Error
+            # ✅ التعديل الرئيسي: استخدام الحقول الموجودة فعلاً في الطلب:
+            # 1. رقم الزبون موجود في حقل 'phone_number'.
+            # 2. العنوان/المنطقة موجود في حقل 'title'.
+            customer_number_display = order.get("phone_number", "غير متوفر")
+            zone_name_display = order.get("title", "غير متوفرة") 
             
             confirmation_message = (
                 f"تم تحميل الطلبية غير المكتملة:\n"
-                f"👤 رقم الزبون: *{customer_number}*\n"
-                f"📌 المنطقة: *{zone_name}*"
+                f"👤 رقم الزبون: *{customer_number_display}*\n"
+                f"📌 عنوان الطلب: *{zone_name_display}*"
             )
 
             # عرض الطلبية المحددة بأزرارها
