@@ -1951,12 +1951,13 @@ async def show_incomplete_orders(update: Update, context: ContextTypes.DEFAULT_T
 
 async def handle_incomplete_order_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """معالجة اختيار طلبية غير مكتملة"""
-    # ✅ التعديل هنا: الوصول إلى 'orders' من الذاكرة المشتركة
-    orders = context.application.bot_data['orders']
+    # ✅ الوصول إلى 'orders' من الذاكرة المشتركة للبوت (مهم جداً)
+    orders = context.application.bot_data.get('orders', {}) 
     
     try:
         query = update.callback_query
-        await query.answer()
+        # الإجابة على الكويري أولاً لمنع "انتظار" البوت
+        await query.answer() 
         
         if query.data == "cancel_incomplete":
             await query.edit_message_text("تم إلغاء عملية تحميل الطلبات.")
@@ -1965,12 +1966,13 @@ async def handle_incomplete_order_selection(update: Update, context: ContextType
         if query.data.startswith("load_incomplete_"):
             order_id = query.data.replace("load_incomplete_", "")
             user_id = str(query.from_user.id)
+            chat_id = query.message.chat_id
             
             if order_id not in orders:
-                await query.edit_message_text("❌ هذه الطلبية لم تعد موجودة.")
+                await context.bot.send_message(chat_id=chat_id, text="❌ هذه الطلبية لم تعد موجودة.")
                 return
             
-            order = orders[order_id] # جلب معلومات الطلب
+            order = orders[order_id]
             
             # حذف رسالة القائمة
             try:
@@ -1978,25 +1980,27 @@ async def handle_incomplete_order_selection(update: Update, context: ContextType
             except:
                 pass
             
-            # تحديد رسالة الترحيب اللي تشمل رقم الزبون
+            # ✅ التعديل الرئيسي: استخدام .get() بأمان لمنع KeyError
             customer_number = order.get("customer_number", "غير متوفر")
+            zone_name = order.get("zone_name", "غير متوفرة") # هذا يمنع الخطأ Key Error
+            
             confirmation_message = (
                 f"تم تحميل الطلبية غير المكتملة:\n"
                 f"👤 رقم الزبون: *{customer_number}*\n"
-                f"📌 المنطقة: *{order['zone_name']}*" # إظهار المنطقة
+                f"📌 المنطقة: *{zone_name}*"
             )
 
             # عرض الطلبية المحددة بأزرارها
-            # ✅ البوت الآن سيعرض الأزرار بعد استدعاء هذه الدالة
-            await show_buttons(query.message.chat_id, context, user_id, order_id, 
+            await show_buttons(chat_id, context, user_id, order_id, 
                              confirmation_message=confirmation_message)
             
     except Exception as e:
         logger.error(f"Error in handle_incomplete_order_selection: {e}", exc_info=True)
-        try:
-            await query.edit_message_text("❌ حدث خطأ في تحميل الطلبية")
-        except:
-            pass
+        # إرسال رسالة خطأ جديدة بدلاً من تعديل رسالة قديمة
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id, 
+            text="❌ حدث خطأ في تحميل الطلبية. (تم إرسال الخطأ إلى السجل)."
+        )
     
     
 if __name__ == "__main__":
