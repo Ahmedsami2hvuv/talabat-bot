@@ -447,8 +447,11 @@ async def show_buttons(chat_id, context, user_id, order_id, confirmation_message
 
         message_text = ""
         if confirmation_message:
+            # ✅ الرسالة الآن تتضمن رقم الزبون والمنطقة من الدالة السابقة
             message_text += f"{confirmation_message}\n\n"
-        message_text += f"دوس على منتج واكتب سعره *{order['title']}*:"
+        
+        # ✅ رسالة الترحيب صارت أوضح
+        message_text += f"دوس على منتج واكتب سعره ({order['title']}):"
 
         msg_info = last_button_message.get(order_id)
         if msg_info:
@@ -1948,6 +1951,7 @@ async def show_incomplete_orders(update: Update, context: ContextTypes.DEFAULT_T
 
 async def handle_incomplete_order_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """معالجة اختيار طلبية غير مكتملة"""
+    orders = context.application.bot_data['orders']
     try:
         query = update.callback_query
         await query.answer()
@@ -1964,18 +1968,28 @@ async def handle_incomplete_order_selection(update: Update, context: ContextType
                 await query.edit_message_text("❌ هذه الطلبية لم تعد موجودة.")
                 return
             
+            order = orders[order_id] # ✅ التغيير هنا: جلب معلومات الطلب
+            
             # حذف رسالة القائمة
             try:
                 await query.message.delete()
             except:
                 pass
             
+            # ✅ التغيير هنا: تحديد رسالة الترحيب اللي تشمل رقم الزبون
+            customer_number = order.get("customer_number", "غير متوفر")
+            confirmation_message = (
+                f"تم تحميل الطلبية غير المكتملة:\n"
+                f"👤 رقم الزبون: *{customer_number}*\n"
+                f"📌 المنطقة: *{order['zone_name']}*" # إظهار المنطقة
+            )
+
             # عرض الطلبية المحددة بأزرارها
             await show_buttons(query.message.chat_id, context, user_id, order_id, 
-                             confirmation_message="تم تحميل الطلبية غير المكتملة:")
+                             confirmation_message=confirmation_message)
             
     except Exception as e:
-        logger.error(f"Error in handle_incomplete_order_selection: {e}")
+        logger.error(f"Error in handle_incomplete_order_selection: {e}", exc_info=True)
         try:
             await query.edit_message_text("❌ حدث خطأ في تحميل الطلبية")
         except:
