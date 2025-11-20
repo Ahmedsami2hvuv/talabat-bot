@@ -1507,7 +1507,7 @@ async def show_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         order_buy += buy
                         order_sell += sell
                         order_net_profit += profit_item # نجمع ربح كل منتج
-                        details.append(f"  - {p_name} | شراء💸: {format_float(buy)} | بيع💵 : {format_float(sell)} | ربح💲: {format_float(profit_item)}")
+                        details.append(f"  - {p_name} | 👊🏿: {format_float(buy)} | ✊🏻 : {format_float(sell)} | 💲: {format_float(profit_item)}")
                     else:
                         details.append(f"  - {p_name} | (لم يتم تسعيره)")
             else:
