@@ -393,92 +393,76 @@ async def show_buttons(chat_id, context, user_id, order_id, confirmation_message
     last_button_message = context.application.bot_data['last_button_message']
 
     try:
-        logger.info(f"[{chat_id}] show_buttons called for order {order_id}. User: {user_id}.")
-        logger.info(f"[{chat_id}] Current pricing data for order {order_id} in show_buttons: {json.dumps(pricing.get(order_id), indent=2)}")
-
         if order_id not in orders:
-            logger.warning(f"[{chat_id}] Attempted to show buttons for non-existent order_id: {order_id}")
-            await context.bot.send_message(chat_id=chat_id, text="ترا الطلب مموجود تري سوي طلب جديد.")
-            if user_id in context.user_data:
-                context.user_data[user_id].pop("order_id", None)
-                context.user_data[user_id].pop("product", None)
-                context.user_data[user_id].pop("current_active_order_id", None)
-                context.user_data[user_id].pop("messages_to_delete", None)
+            await context.bot.send_message(chat_id=chat_id, text="الطلب مموجود.")
             return
 
         order = orders[order_id]
-
-        # قائمة الأزرار النهائية اللي راح نمليها
         final_buttons_list = []
 
-        # ✅ إضافة زر "إضافة منتج جديد" وزر "مسح منتج" (عام) في صف واحد بالأعلى
+        # ازرار الاضافة والمسح
         final_buttons_list.append([
             InlineKeyboardButton("➕ إضافة منتج", callback_data=f"add_product_to_order_{order_id}"),
             InlineKeyboardButton("🗑️ مسح منتج", callback_data=f"delete_specific_product_{order_id}")
         ])
 
-        # فصل المنتجات المكتملة عن المنتجات اللي تنتظر التسعير
         completed_products_buttons = []
         pending_products_buttons = []
 
-        # ✅ التغيير هنا: استخدمنا enumerate حتى نجيب الـ index (i) مال كل منتج
-        for i, p_name in enumerate(order["products"]):
-            # ✅ التغيير هنا: الـ callback_data صار بي الـ index (i) بدل p_name
-            # هذا يحل مشكلة الاسم الطويل
-            callback_data_for_product = f"{order_id}|{i}" 
-            
-            if p_name in pricing.get(order_id, {}) and 'buy' in pricing[order_id].get(p_name, {}) and 'sell' in pricing[order_id].get(p_name, {}):
-                completed_products_buttons.append([InlineKeyboardButton(f"✅ {p_name}", callback_data=callback_data_for_product)])
-                logger.info(f"[{chat_id}] Product '{p_name}' (index {i}) in order {order_id} is completed.")
-            else:
-                pending_products_buttons.append([InlineKeyboardButton(p_name, callback_data=callback_data_for_product)])
-                logger.info(f"[{chat_id}] Product '{p_name}' (index {i}) in order {order_id} is pending.")
+        # جلب قائمة المنتجات المعدلة حالياً
+        edited_list = context.user_data.get(user_id, {}).get("edited_products_list", [])
 
-        # ✅ إضافة أزرار المنتجات المكتملة أولاً
+        for i, p_name in enumerate(order["products"]):
+            callback_data_for_product = f"{order_id}|{i}"
+            
+            # تحديد شكل الزر (صح، علامة تدوير، او اسم فقط)
+            button_text = p_name
+            is_priced = p_name in pricing.get(order_id, {}) and 'buy' in pricing[order_id].get(p_name, {})
+
+            if is_priced:
+                if p_name in edited_list:
+                    button_text = f"✏️✅ {p_name}"  # ✅ العلامة الجديدة للمنتج المعدل
+                else:
+                    button_text = f"✅ {p_name}"
+                completed_products_buttons.append([InlineKeyboardButton(button_text, callback_data=callback_data_for_product)])
+            else:
+                pending_products_buttons.append([InlineKeyboardButton(button_text, callback_data=callback_data_for_product)])
+
         final_buttons_list.extend(completed_products_buttons)
-        # ✅ ثم إضافة أزرار المنتجات اللي تنتظر التسعير
         final_buttons_list.extend(pending_products_buttons)
 
-        # ✅ إضافة زر إلغاء التعديل في الأسفل إذا كان المستخدم في وضع التعديل
+        # زر انتهاء التعديل يظهر فقط في وضع التعديل
         if context.user_data.get(user_id, {}).get("editing_mode", False):
-            final_buttons_list.append([InlineKeyboardButton("❌ إلغاء التعديل", callback_data=f"cancel_edit_{order_id}")])
+            final_buttons_list.append([
+                InlineKeyboardButton("💾 اكتمل التعديل (التالي)", callback_data=f"done_editing_{order_id}")
+            ])
+            final_buttons_list.append([
+                InlineKeyboardButton("❌ إلغاء التعديل", callback_data=f"cancel_edit_{order_id}")
+            ])
 
         markup = InlineKeyboardMarkup(final_buttons_list)
 
-        message_text = ""
-        if confirmation_message:
-            # ✅ الرسالة الآن تتضمن رقم الزبون والمنطقة من الدالة السابقة
-            message_text += f"{confirmation_message}\n\n"
-        
-        # ✅ رسالة الترحيب صارت أوضح
+        message_text = f"{confirmation_message}\n\n" if confirmation_message else ""
         message_text += f"دوس على منتج واكتب سعره ({order['title']}):"
 
+        # حذف الرسالة القديمة وارسال جديدة
         msg_info = last_button_message.get(order_id)
         if msg_info:
-            logger.info(f"[{chat_id}] Deleting old button message {msg_info['message_id']} for order {order_id} before sending new one.")
             context.application.create_task(delete_message_in_background(context, chat_id=msg_info["chat_id"], message_id=msg_info["message_id"]))
-            # No del last_button_message[order_id] here, it's updated after new message is sent
 
-        msg = await context.bot.send_message(
-            chat_id=chat_id,
-            text=message_text,
-            reply_markup=markup,
-            parse_mode="Markdown"
-        )
-        logger.info(f"[{chat_id}] Sent new button message {msg.message_id} for order {order_id}")
+        msg = await context.bot.send_message(chat_id=chat_id, text=message_text, reply_markup=markup, parse_mode="Markdown")
         last_button_message[order_id] = {"chat_id": chat_id, "message_id": msg.message_id}
         context.application.create_task(save_data_in_background(context)) 
 
+        # تنظيف الرسائل القديمة
         if user_id in context.user_data and 'messages_to_delete' in context.user_data[user_id]:
-            logger.info(f"[{chat_id}] Scheduling deletion of {len(context.user_data[user_id].get('messages_to_delete', []))} old messages after showing new buttons for user {user_id}.")
             for msg_info in context.user_data[user_id]['messages_to_delete']:
                 context.application.create_task(delete_message_in_background(context, chat_id=msg_info['chat_id'], message_id=msg_info['message_id']))
             context.user_data[user_id]['messages_to_delete'].clear()
+            
     except Exception as e:
-        logger.error(f"[{chat_id}] Error in show_buttons for order {order_id}: {e}", exc_info=True)
-        # ✅ هنا كلش مهم: نطبع الخطأ حتى نعرف إذا المشكلة بعدها بالـ 64 بايت
-        logger.error(f"[{chat_id}] More details on show_buttons error: {e}. This might be a 'Callback data too long' error if product names are extremely long (even as labels).")
-        await context.bot.send_message(chat_id=chat_id, text="ماكدرت اعرض الازرار، يمكن اسم واحد من المنتجات كلش طويل. حاول تعدل الطلب.")
+        logger.error(f"Error in show_buttons: {e}", exc_info=True)
+        await context.bot.send_message(chat_id=chat_id, text="خطأ في عرض الازرار.")
         
 async def product_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     orders = context.application.bot_data['orders']
@@ -722,12 +706,6 @@ async def cancel_delete_product_callback(update: Update, context: ContextTypes.D
     return ConversationHandler.END
 
 async def receive_buy_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """استلام سعر الشراء وسعر البيع لمنتج معين من المجهز.
-    يقبل:
-    1. سطرين منفصلين (سطر للشراء، سطر للبيع).
-    2. سطر واحد (يُعتبر شراء وبيع).
-    3. القيمة صفر (0) لتسجيل المنتج كغير متوفر.
-    """
     user_id = str(update.message.from_user.id)
     chat_id = update.effective_chat.id
     
@@ -735,7 +713,6 @@ async def receive_buy_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
     pricing = context.application.bot_data['pricing']
     
     try:
-        # 1. محاولة حذف الرسائل السابقة التي تطلب السعر
         try:
             await delete_previous_messages(context, user_id)
         except Exception:
@@ -745,81 +722,69 @@ async def receive_buy_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
         product = context.user_data[user_id].get("product")
         
         if not order_id or not product:
-            await update.message.reply_text("❌ لم يتم تحديد طلبية أو منتج. يرجى البدء من جديد.")
+            await update.message.reply_text("❌ حدث خطأ، ابدأ من جديد.")
             return ConversationHandler.END
 
-        # حفظ رسالة المستخدم الحالية للحذف
         context.user_data.setdefault(user_id, {}).setdefault('messages_to_delete', []).append({
             'chat_id': update.message.chat_id, 
             'message_id': update.message.message_id
         })
         
-        # ------------------------------------------------------------------
-        # 🔄 المنطق لتحليل المدخلات: يدعم سطرين أو سطر واحد
-        # ------------------------------------------------------------------
+        # تحليل السعر
         lines = [line.strip() for line in update.message.text.split('\n') if line.strip()]
-        
-        buy_price_str = None
-        sell_price_str = None
+        buy_price_str, sell_price_str = None, None
 
         if len(lines) == 2:
-            # الحالة الطبيعية: سطرين منفصلين
-            buy_price_str = lines[0]
-            sell_price_str = lines[1]
+            buy_price_str, sell_price_str = lines[0], lines[1]
         elif len(lines) == 1:
-            # حالة سطر واحد: قيمة واحدة (شراء=بيع) أو قيمتين بمسافة
             parts = [p.strip() for p in lines[0].split() if p.strip()]
-            
             if len(parts) == 2:
-                buy_price_str = parts[0]
-                sell_price_str = parts[1]
+                buy_price_str, sell_price_str = parts[0], parts[1]
             elif len(parts) == 1:
-                buy_price_str = parts[0]
-                sell_price_str = parts[0] 
-            else:
-                 buy_price_str = None 
+                buy_price_str, sell_price_str = parts[0], parts[0]
         
         if not buy_price_str or not sell_price_str:
-            msg_error = await update.message.reply_text("😒دكتب عدل دخل سعر الشراء بالسطر الأول وسعر البيع بالسطر الثاني.\nأو سعر واحد فقط في سطر واحد إذا كانا متساويين.")
-            context.user_data[user_id]['messages_to_delete'].append({
-                'chat_id': msg_error.chat_id, 
-                'message_id': msg_error.message_id
-            })
+            msg = await update.message.reply_text("😒 اكتب الاسعار عدل (شراء وبيع).")
+            context.user_data[user_id]['messages_to_delete'].append({'chat_id': msg.chat_id, 'message_id': msg.message_id})
             return ASK_BUY
-            
-        # 3. التحقق من تحويل القيم إلى أرقام
+
         try:
             buy_price = float(buy_price_str)
             sell_price = float(sell_price_str)
-        
-            # ✅ التعديل هنا: السماح بالصفر لكن منع القيم السالبة
-            if buy_price < 0 or sell_price < 0:
-                raise ValueError("الأسعار لا يمكن أن تكون سالبة.")
-
-        except ValueError as e:
-            logger.error(f"[{update.effective_chat.id}] Buy/Sell prices: ValueError for user {user_id} with input '{update.message.text}': {e}", exc_info=True)
-            msg_error = await update.message.reply_text("😒دكتب عدل دخل ارقام صحيحة مال البيع والشراء.")
-            context.user_data[user_id]['messages_to_delete'].append({
-                'chat_id': msg_error.chat_id, 
-                'message_id': msg_error.message_id
-            })
+            if buy_price < 0 or sell_price < 0: raise ValueError
+        except ValueError:
+            msg = await update.message.reply_text("😒 دخل ارقام صحيحة.")
+            context.user_data[user_id]['messages_to_delete'].append({'chat_id': msg.chat_id, 'message_id': msg.message_id})
             return ASK_BUY
 
-        # ------------------------------------------------------------------
-        # 💾 منطق حفظ البيانات والانتقال للحالة التالية
-        # ------------------------------------------------------------------
-
+        # حفظ السعر
         pricing.setdefault(order_id, {}).setdefault(product, {})["buy"] = buy_price
         pricing[order_id][product]["sell"] = sell_price
         orders[order_id]["supplier_id"] = user_id
         
-        logger.info(f"[{update.effective_chat.id}] Pricing for order '{order_id}' and product '{product}' AFTER SAVE: {json.dumps(pricing.get(order_id, {}).get(product), indent=2)}")
-        
+        # ✅ التصليح هنا: نتحقق أول شي اذا احنا بوضع التعديل
+        is_editing = context.user_data.get(user_id, {}).get("editing_mode", False)
+
+        # ✅ فقط اذا كنا بوضع التعديل، نضيف المنتج للقائمة حتى تطلع العلامة ✏️
+        if is_editing:
+            if "edited_products_list" not in context.user_data[user_id]:
+                context.user_data[user_id]["edited_products_list"] = []
+            if product not in context.user_data[user_id]["edited_products_list"]:
+                context.user_data[user_id]["edited_products_list"].append(product)
+
         context.application.create_task(save_data_in_background(context))
         
         context.user_data[user_id].pop("order_id", None)
         context.user_data[user_id].pop("product", None)
-        
+
+        if is_editing:
+            # اذا احنا بوضع التعديل، ارجع اعرض الازرار دائماً وابد لا تروح للمحلات
+            logger.info(f"[{chat_id}] Price updated in Edit Mode. Returning to buttons.")
+            # السطر الجوه هو اللي جان مسبب المشكلة، تأكد ينسخ كامل بسطر واحد
+            await show_buttons(chat_id, context, user_id, order_id, confirmation_message=f"تم تعديل سعر '{product}' بنجاح ✅.")
+            return ConversationHandler.END
+
+        # اذا مو تعديل (طلب جديد)، شيك اذا كملت كل المنتجات
         is_order_complete = True
         for p_name in orders[order_id].get("products", []):
             if p_name not in pricing.get(order_id, {}) or 'buy' not in pricing[order_id].get(p_name, {}):
@@ -827,23 +792,18 @@ async def receive_buy_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 break
                 
         if is_order_complete:
-            logger.info(f"[{update.effective_chat.id}] Order {order_id} is now fully priced. Requesting places count.")
             await request_places_count_standalone(chat_id, context, user_id, order_id)
             return ConversationHandler.END
         else:
-            logger.info(f"[{update.effective_chat.id}] Order {order_id} is partially priced. Showing updated buttons.")
-            await show_buttons(chat_id, context, user_id, order_id, confirmation_message="تم إدخال السعر. بقي منتجات أخرى؟")
+            await show_buttons(chat_id, context, user_id, order_id, confirmation_message="تم إدخال السعر.")
             return ConversationHandler.END
-            
+
     except Exception as e:
-        logger.error(f"[{update.effective_chat.id}] Critical error in receive_buy_price: {e}", exc_info=True)
-        msg_error = await update.message.reply_text("كسها صار خطا مدري وين سوي طلب جديد يلا.")
-        context.user_data[user_id]['messages_to_delete'].append({
-            'chat_id': msg_error.chat_id,
-            'message_id': msg_error.message_id
-        })
+        logger.error(f"Error in receive_buy_price: {e}", exc_info=True)
+        await update.message.reply_text("صار خطا.")
         return ConversationHandler.END
-        
+
+
 async def receive_new_product_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.effective_user.id)
     chat_id = update.effective_chat.id
@@ -1263,43 +1223,69 @@ async def edit_prices(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.answer()
         
         user_id = str(query.from_user.id)
-        logger.info(f"[{query.message.chat_id}] Edit prices callback from user {user_id}: {query.data}. User data: {json.dumps(context.user_data.get(user_id, {}), indent=2)}")
+        logger.info(f"[{query.message.chat_id}] Edit prices callback from user {user_id}: {query.data}")
+        
         if query.data.startswith("edit_prices_"):
             order_id = query.data.replace("edit_prices_", "")
         else:
-            await query.message.reply_text("زربة الدكمة عطبت بالله دجرب من جديد😐.")
+            await query.message.reply_text("زربة الدكمة عطبت.")
             return ConversationHandler.END
 
         if order_id not in orders:
-            logger.warning(f"[{query.message.chat_id}] Edit prices: Order {order_id} not found.")
-            await query.message.reply_text("😐زربه الطلب الي تريد تعدلة ماموجود ولا تسالين وين راح .")
+            await query.message.reply_text("الطلب مموجود.")
             return ConversationHandler.END
 
-        # وضع علامة أن المستخدم في وضع التعديل
+        # ✅ تفعيل وضع التعديل وتصفير قائمة المنتجات المعدلة حديثاً
         context.user_data.setdefault(user_id, {})["editing_mode"] = True
+        context.user_data[user_id]["edited_products_list"] = []  # قائمة جديدة لتتبع التعديلات
 
         if query.message:
             context.user_data.setdefault(user_id, {}).setdefault('messages_to_delete', []).append({
                 'chat_id': query.message.chat_id,
                 'message_id': query.message.message_id
             })
-            logger.info(f"[{query.message.chat_id}] Added edit prices button message {query.message.message_id} to delete queue.")
             try:
                 await context.bot.edit_message_reply_markup(
                     chat_id=query.message.chat_id,
                     message_id=query.message.message_id,
                     reply_markup=None 
                 )
-            except Exception as e:
-                logger.warning(f"[{query.message.chat_id}] Could not clear buttons from edit prices message {query.message.message_id} directly: {e}. Proceeding.")
+            except Exception:
+                pass
         
-        await show_buttons(query.message.chat_id, context, user_id, order_id, confirmation_message="يمكنك الآن تعديل أسعار المنتجات أو الضغط على إلغاء التعديل للعودة للفاتورة.")
-        logger.info(f"[{query.message.chat_id}] Showing edit buttons for order {order_id}. Exiting conversation for user {user_id}.")
+        await show_buttons(query.message.chat_id, context, user_id, order_id, confirmation_message="وضع التعديل: اضغط على المنتج لتغيير سعره، ثم اضغط 'اكتمل التعديل'.")
         return ConversationHandler.END
     except Exception as e:
-        logger.error(f"[{update.effective_chat.id}] Error in edit_prices: {e}", exc_info=True)
-        await update.callback_query.message.reply_text("😏زربة صار خطا بالتعديل دسوي طلبية جديده بدون حجي زايد.")
+        logger.error(f"Error in edit_prices: {e}", exc_info=True)
+        await update.callback_query.message.reply_text("صار خطا بالتعديل.")
         return ConversationHandler.END
+        
+async def finish_editing_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    user_id = str(query.from_user.id)
+    chat_id = query.message.chat_id
+    order_id = query.data.replace("done_editing_", "")
+
+    logger.info(f"[{chat_id}] Finished editing for order {order_id}. Proceeding to places count.")
+
+    # نلغي وضع التعديل لان خلصنا
+    if user_id in context.user_data:
+        context.user_data[user_id].pop("editing_mode", None)
+
+    # حذف رسالة الأزرار الحالية حتى لا تبقى معلقة
+    try:
+        await query.message.delete()
+    except Exception as e:
+        logger.warning(f"Could not delete message in finish_editing_callback: {e}")
+
+    # الانتقال لطلب عدد المحلات
+    await request_places_count_standalone(chat_id, context, user_id, order_id)
+    return ConversationHandler.END
+
+
+
 
 async def cancel_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -1587,6 +1573,10 @@ def main():
 
     app.add_handler(MessageHandler(filters.UpdateType.EDITED_MESSAGE, edited_message))
     app.add_handler(CallbackQueryHandler(edit_prices, pattern=r"^edit_prices_"))
+    
+    # ✅✅ هذا السطر الجديد اللي ضفناه (زر اكتمل التعديل) ✅✅
+    app.add_handler(CallbackQueryHandler(finish_editing_callback, pattern=r"^done_editing_"))
+
     app.add_handler(CallbackQueryHandler(start_new_order_callback, pattern=r"^start_new_order$"))
     
     # أمر /zones لعرض المناطق
@@ -2010,3 +2000,4 @@ async def handle_incomplete_order_selection(update: Update, context: ContextType
     
 if __name__ == "__main__":
     main()
+    
