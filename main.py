@@ -434,10 +434,10 @@ async def show_buttons(chat_id, context, user_id, order_id, confirmation_message
         # زر انتهاء التعديل يظهر فقط في وضع التعديل
         if context.user_data.get(user_id, {}).get("editing_mode", False):
             final_buttons_list.append([
-                InlineKeyboardButton("💾 اكتمل التعديل", callback_data=f"done_editing_{order_id}")
+                InlineKeyboardButton("تعديل المحلات🏪", callback_data=f"done_editing_{order_id}")
             ])
             final_buttons_list.append([
-                InlineKeyboardButton("❌ إلغاء التعديل", callback_data=f"cancel_edit_{order_id}")
+                InlineKeyboardButton("اكتمل التعديل💾", callback_data=f"cancel_edit_{order_id}")
             ])
 
         markup = InlineKeyboardMarkup(final_buttons_list)
