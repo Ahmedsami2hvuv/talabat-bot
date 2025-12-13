@@ -724,21 +724,16 @@ async def receive_buy_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
     pricing = context.application.bot_data['pricing']
     
     try:
-        # ✅✅ الذكاء الاصطناعي (تحليل النص قبل كلشي) ✅✅
-        # اذا المستخدم داز رسالة طويلة (3 اسطر او اكثر)، نعتبرها طلب جديد ونلغي وضع التسعير
+        # ✅ الاحتفاظ بذكاء البوت: اذا المجهز دز نص طويل (طلب جديد) بالغلط وهو بوضع السعر
         lines = [line.strip() for line in update.message.text.split('\n') if line.strip()]
         if len(lines) >= 3:
             logger.info(f"[{chat_id}] User {user_id} sent a new order while in ASK_BUY mode. Switching to process_order.")
-            # تنظيف حالة التسعير
             if user_id in context.user_data:
                 context.user_data[user_id].pop("order_id", None)
                 context.user_data[user_id].pop("product", None)
-            
-            # استدعاء دالة معالجة الطلب فوراً بنفس الرسالة
             await process_order(update, context, update.message)
             return ConversationHandler.END
 
-        # اكمال الاجراءات الطبيعية اذا كان النص قصير (سعر)
         try:
             await delete_previous_messages(context, user_id)
         except Exception:
@@ -751,21 +746,14 @@ async def receive_buy_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("❌ حدث خطأ، ابدأ من جديد.")
             return ConversationHandler.END
 
-        # ✅✅ التحقق اذا احد سبقك وسعر المنتج ✅✅
-        if pricing.get(order_id, {}).get(product, {}).get("buy") is not None:
-            # اذا احنا بوضع التعديل عادي، بس اذا طلب جديد واحد ثاني سعره نكله
-            is_editing = context.user_data.get(user_id, {}).get("editing_mode", False)
-            if not is_editing:
-                await update.message.reply_text(f"عيني '{product}' تسعر من قبل مجهز ثاني، ماكو داعي تكتب سعره. تكدر تبلش طلب جديد.")
-                context.user_data[user_id].pop("order_id", None)
-                context.user_data[user_id].pop("product", None)
-                return ConversationHandler.END
+        # 🛑 هنا مسحنا كل القيود، أي واحد يكدر يعدل السعر 🛑
 
         context.user_data.setdefault(user_id, {}).setdefault('messages_to_delete', []).append({
             'chat_id': update.message.chat_id, 
             'message_id': update.message.message_id
         })
         
+        # تحليل السعر
         buy_price_str, sell_price_str = None, None
 
         if len(lines) == 2:
@@ -791,11 +779,14 @@ async def receive_buy_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data[user_id]['messages_to_delete'].append({'chat_id': msg.chat_id, 'message_id': msg.message_id})
             return ASK_BUY
 
-        # حفظ السعر
+        # حفظ السعر وتحديث المجهز (مؤقتاً)
         pricing.setdefault(order_id, {}).setdefault(product, {})["buy"] = buy_price
         pricing[order_id][product]["sell"] = sell_price
+        
+        # نسجل ان هذا المجهز اشتغل ع الطلب (بس مو نهائي)
         orders[order_id]["supplier_id"] = user_id
         
+        # منطق وضع التعديل (القلم)
         is_editing = context.user_data.get(user_id, {}).get("editing_mode", False)
 
         if is_editing:
@@ -809,11 +800,13 @@ async def receive_buy_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data[user_id].pop("order_id", None)
         context.user_data[user_id].pop("product", None)
 
+        # اذا بوضع التعديل، ارجع اعرض الازرار
         if is_editing:
             logger.info(f"[{chat_id}] Price updated in Edit Mode. Returning to buttons.")
             await show_buttons(chat_id, context, user_id, order_id, confirmation_message=f"تم تعديل سعر '{product}' بنجاح ✅.")
             return ConversationHandler.END
 
+        # اذا مو وضع تعديل (شغل عادي)، نشيك اذا الطلب كمل
         is_order_complete = True
         for p_name in orders[order_id].get("products", []):
             if p_name not in pricing.get(order_id, {}) or 'buy' not in pricing[order_id].get(p_name, {}):
@@ -821,9 +814,11 @@ async def receive_buy_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 break
                 
         if is_order_complete:
+            # اذا كملت كل المنتجات، نحوله لعدد المحلات
             await request_places_count_standalone(chat_id, context, user_id, order_id)
             return ConversationHandler.END
         else:
+            # اذا بعد اكو منتجات، نرجع نعرض الازرار
             await show_buttons(chat_id, context, user_id, order_id, confirmation_message="تم إدخال السعر.")
             return ConversationHandler.END
 
@@ -913,7 +908,7 @@ async def handle_places_count_data(update: Update, context: ContextTypes.DEFAULT
         places = None
         chat_id = update.effective_chat.id
         user_id = str(update.effective_user.id) 
-        logger.info(f"[{chat_id}] handle_places_count_data triggered by user {user_id}. Update type: {'CallbackQuery' if update.callback_query else 'Message'}. User data: {json.dumps(context.user_data.get(user_id), indent=2)}")
+        logger.info(f"[{chat_id}] handle_places_count_data triggered by user {user_id}.")
 
         context.user_data.setdefault(user_id, {})
         if 'messages_to_delete' not in context.user_data[user_id]:
@@ -932,8 +927,7 @@ async def handle_places_count_data(update: Update, context: ContextTypes.DEFAULT
                     order_id_to_process = parts[2] 
                     
                     if order_id_to_process not in orders:
-                        logger.error(f"[{chat_id}] Order ID '{order_id_to_process}' from callback data not found in global orders.")
-                        await context.bot.send_message(chat_id=chat_id, text="باعلي هيو الطلبية الي ددوس عدد محلاتها ماهيه ولا دكلي وينهيا . تريد سوي طلب جديد")
+                        await context.bot.send_message(chat_id=chat_id, text="باعلي هيو الطلبية مموجودة.")
                         if user_id in context.user_data and "current_active_order_id" in context.user_data[user_id]:
                             del context.user_data[user_id]["current_active_order_id"]
                         return ConversationHandler.END 
@@ -942,74 +936,61 @@ async def handle_places_count_data(update: Update, context: ContextTypes.DEFAULT
                     if query.message:
                         try:
                             await context.bot.delete_message(chat_id=query.message.chat_id, message_id=query.message.message_id)
-                        except Exception as e:
-                            logger.warning(f"[{chat_id}] Could not delete places message {query.message.message_id} directly: {e}. Proceeding.")
-
+                        except Exception:
+                            pass
                 else:
-                    raise ValueError(f"Unexpected callback_data format for places count: {query.data}")
-            except (ValueError, IndexError) as e:
-                logger.error(f"[{chat_id}] Failed to parse places count from callback data '{query.data}': {e}", exc_info=True)
-                await context.bot.send_message(chat_id=chat_id, text="😐الدكمة زربت سوي طلب جديد.")
+                    raise ValueError(f"Unexpected data: {query.data}")
+            except Exception as e:
+                logger.error(f"[{chat_id}] Failed to parse places count: {e}", exc_info=True)
+                await context.bot.send_message(chat_id=chat_id, text="😐الدكمة زربت.")
                 return ConversationHandler.END 
         
         elif update.message: 
             context.user_data[user_id]['messages_to_delete'].append({'chat_id': update.message.chat_id, 'message_id': update.message.message_id})
-            logger.info(f"[{chat_id}] Received text message for places count from user {user_id}: '{update.message.text}'")
-            
             order_id_to_process = context.user_data[user_id].get("current_active_order_id")
 
             if not order_id_to_process or order_id_to_process not in orders:
-                 logger.warning(f"[{chat_id}] Places count text input: No current active order for user {user_id} or order {order_id_to_process} is invalid.")
-                 msg_error = await context.bot.send_message(chat_id=chat_id, text="عذراً، ماكو طلبية حالية منتظر عدد محلاتها أو الطلبية قديمة جداً. الرجاء استخدم الأزرار لتحديد عدد المحلات، أو بدء طلبية جديدة.", parse_mode="Markdown")
+                 msg_error = await context.bot.send_message(chat_id=chat_id, text="ماكو طلبية فعالة حالياً.")
                  context.user_data[user_id]['messages_to_delete'].append({'chat_id': msg_error.chat_id, 'message_id': msg_error.message_id})
-                 if user_id in context.user_data and "current_active_order_id" in context.user_data[user_id]:
-                            del context.user_data[user_id]["current_active_order_id"]
                  return ConversationHandler.END 
 
             if not update.message.text.strip().isdigit(): 
-                logger.warning(f"[{chat_id}] Places count text input: Non-integer input from user {user_id}: '{update.message.text}'")
                 msg_error = await context.bot.send_message(chat_id=chat_id, text="😐يابه دوس رقم صحيح.")
                 context.user_data[user_id]['messages_to_delete'].append({'chat_id': msg_error.chat_id, 'message_id': msg_error.message_id})
                 return ASK_PLACES_COUNT 
             
             try:
                 places = int(update.message.text.strip())
-                if places < 0:
-                    logger.warning(f"[{chat_id}] Places count text input: Negative value from user {user_id}: '{update.message.text}'")
-                    msg_error = await context.bot.send_message(chat_id=chat_id, text="عدد المحلات يجب أن يكون رقماً موجباً. الرجاء إدخال عدد المحلات بشكل صحيح.")
-                    context.user_data[user_id]['messages_to_delete'].append({'chat_id': msg_error.chat_id, 'message_id': msg_error.message_id})
-                    return ASK_PLACES_COUNT 
-            except ValueError as e: 
-                logger.error(f"[{chat_id}] Places count text input: ValueError for user {user_id} with input '{update.message.text}': {e}", exc_info=True)
+                if places < 0: raise ValueError
+            except ValueError: 
                 msg_error = await context.bot.send_message(chat_id=chat_id, text="😐يابه ددوس عدل.")
                 context.user_data[user_id]['messages_to_delete'].append({'chat_id': msg_error.chat_id, 'message_id': msg_error.message_id})
                 return ASK_PLACES_COUNT 
         
         if places is None or order_id_to_process is None:
-            logger.warning(f"[{chat_id}] handle_places_count_data: No valid places count or order ID to process.")
-            await context.bot.send_message(chat_id=chat_id, text="عذراً، لم أتمكن من فهم عدد المحلات أو الطلبية. الرجاء إدخال رقم صحيح أو البدء بطلبية جديدة.")
-            if user_id in context.user_data and "current_active_order_id" in context.user_data[user_id]:
-                            del context.user_data[user_id]["current_active_order_id"]
+            await context.bot.send_message(chat_id=chat_id, text="عذراً، صار خطأ.")
             return ConversationHandler.END 
 
         if 'places_count_message' in context.user_data[user_id]:
             msg_info = context.user_data[user_id]['places_count_message']
             try:
                 await context.bot.delete_message(chat_id=msg_info['chat_id'], message_id=msg_info['message_id'])
-            except Exception as e:
-                logger.warning(f"[{chat_id}] Could not delete places count message: {e}")
+            except Exception:
+                pass
             del context.user_data[user_id]['places_count_message']
 
+        # ✅✅ هنا التعديل الجوهري ✅✅
+        # نسجل عدد المحلات + نسجل انو هذا المستخدم هو صاحب الطلب النهائي
         orders[order_id_to_process]["places_count"] = places
-        # هنا لازم نحفظ daily_profit المحدثة
-        # نحدث daily_profit مباشرة في bot_data أو عبر دالة حفظ عامة
-        context.application.bot_data['daily_profit'] = daily_profit # تحديث القيمة في bot_data
+        orders[order_id_to_process]["supplier_id"] = user_id  # <--- هذا السطر يخلي الملكية للشخص اللي داس الدكمة
+
+        # حفظ البيانات
+        context.application.bot_data['daily_profit'] = daily_profit 
         context.application.create_task(save_data_in_background(context))
 
-        logger.info(f"[{chat_id}] Places count {places} saved for order {order_id_to_process}. Current user_data: {json.dumps(context.user_data.get(user_id), indent=2)}")
+        logger.info(f"[{chat_id}] Order {order_id_to_process} finalized by {user_id}. Places: {places}.")
 
         if user_id in context.user_data and 'messages_to_delete' in context.user_data[user_id]:
-            logger.info(f"[{chat_id}] Scheduling deletion of {len(context.user_data[user_id].get('messages_to_delete', []))} old messages after showing final options for user {user_id}.")
             for msg_info in context.user_data[user_id]['messages_to_delete']:
                 context.application.create_task(delete_message_in_background(context, chat_id=msg_info['chat_id'], message_id=msg_info['message_id']))
             context.user_data[user_id]['messages_to_delete'].clear()
@@ -1018,15 +999,13 @@ async def handle_places_count_data(update: Update, context: ContextTypes.DEFAULT
         
         if user_id in context.user_data and "current_active_order_id" in context.user_data[user_id]:
             del context.user_data[user_id]["current_active_order_id"]
-            logger.info(f"[{chat_id}] Cleared current_active_order_id for user {user_id} after processing places count.")
 
         return ConversationHandler.END 
     except Exception as e:
         logger.error(f"[{chat_id}] Error in handle_places_count_data: {e}", exc_info=True)
-        await context.bot.send_message(chat_id=chat_id, text="عذراً، حدث خطأ أثناء معالجة عدد المحلات. الرجاء بدء طلبية جديدة.", parse_mode="Markdown")
+        await context.bot.send_message(chat_id=chat_id, text="عذراً، صار خطأ.", parse_mode="Markdown")
         return ConversationHandler.END
-
-from urllib.parse import quote
+        
 
 async def show_final_options(chat_id, context, user_id, order_id, message_prefix=None):
     orders = context.application.bot_data['orders']
