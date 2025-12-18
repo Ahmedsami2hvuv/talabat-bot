@@ -832,34 +832,51 @@ async def receive_buy_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def receive_new_product_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.effective_user.id)
     chat_id = update.effective_chat.id
-    new_product_name = update.message.text.strip()
+    
+    # تحويل الرسالة إلى قائمة أسطر وتنظيفها
+    incoming_text = update.message.text.strip()
+    new_products_list = [line.strip() for line in incoming_text.split('\n') if line.strip()]
 
-    logger.info(f"[{chat_id}] Received new product name '{new_product_name}' from user {user_id}.")
+    logger.info(f"[{chat_id}] Received products to add: {new_products_list} from user {user_id}.")
 
     order_id = context.user_data[user_id].get("current_active_order_id")
 
-    if not order_id or order_id not in orders:
-        logger.warning(f"[{chat_id}] No active order found or order_id invalid for user {user_id} when adding new product.")
+    if not order_id or order_id not in context.application.bot_data['orders']:
+        logger.warning(f"[{chat_id}] No active order found or order_id invalid for user {user_id}.")
         await update.message.reply_text("ترا ماكو طلب فعال حتى أضيفله منتج. سوي طلب جديد أول.")
         context.user_data[user_id].pop("adding_new_product", None)
         return ConversationHandler.END
 
-    order = orders[order_id]
+    order = context.application.bot_data['orders'][order_id]
+    added_count = 0
+    skipped_products = []
 
-    if new_product_name in order["products"]:
-        await update.message.reply_text(f"ترا المنتج '{new_product_name}' موجود بالطلبية أصلاً. اختار منتج ثاني أو كمل تسعير الموجودات.")
+    for p_name in new_products_list:
+        if p_name in order["products"]:
+            skipped_products.append(p_name)
+        else:
+            order["products"].append(p_name)
+            added_count += 1
+
+    # توثيق الحفظ
+    if added_count > 0:
+        logger.info(f"[{chat_id}] Added {added_count} new products to order {order_id}.")
+        context.application.create_task(save_data_in_background(context))
+        
+        msg_text = f"✅ تمت إضافة {added_count} منتج للطلبية بنجاح."
+        if skipped_products:
+            msg_text += f"\n⚠️ (تجاهلت {len(skipped_products)} منتج لأنهم موجودين أصلاً)."
+        await update.message.reply_text(msg_text)
     else:
-        order["products"].append(new_product_name)
-        logger.info(f"[{chat_id}] Added new product '{new_product_name}' to order {order_id}.")
-        await update.message.reply_text(f"تمت إضافة المنتج '{new_product_name}' للطلبية بنجاح.")
-        context.application.create_task(save_data_in_background(context)) # حفظ البيانات بعد إضافة المنتج
+        await update.message.reply_text("ترا كل المنتجات اللي دزيتهن موجودات بالطلبية أصلاً! 😅")
 
-    context.user_data[user_id].pop("adding_new_product", None) # إزالة العلامة
-    context.user_data[user_id].pop("current_active_order_id", None) # إزالة الـ order_id بعد الانتهاء
+    # تنظيف الذاكرة المؤقتة
+    context.user_data[user_id].pop("adding_new_product", None)
+    context.user_data[user_id].pop("current_active_order_id", None)
 
-    await show_buttons(chat_id, context, user_id, order_id) # عرض الأزرار المحدثة
+    # عرض الأزرار المحدثة (التي تعتمد على الـ index لمنع أخطاء طول البيانات)
+    await show_buttons(chat_id, context, user_id, order_id)
     return ConversationHandler.END
-
 
 
 async def request_places_count_standalone(chat_id, context: ContextTypes.DEFAULT_TYPE, user_id: str, order_id: str):
