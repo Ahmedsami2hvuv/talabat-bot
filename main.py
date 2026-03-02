@@ -172,15 +172,33 @@ load_data()
 # حالات المحادثة
 ASK_BUY, ASK_PLACES_COUNT, ASK_PRODUCT_NAME, ASK_PRODUCT_TO_DELETE, ASK_CUSTOMER_PHONE_NUMBER_FOR_DELETION, ASK_FOR_DELETION_CONFIRMATION = range(6)
 
-# جلب التوكن ومعرف المالك من متغيرات البيئة
+# جلب التوكن ومعرف المالك/المديرين من متغيرات البيئة
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-OWNER_ID = int(os.getenv("OWNER_TELEGRAM_ID")) 
+_owner_raw = (os.getenv("OWNER_TELEGRAM_ID") or "").strip()
 OWNER_PHONE_NUMBER = os.getenv("OWNER_TELEGRAM_PHONE_NUMBER", "+9647733921468")
 
 if TOKEN is None:
     raise ValueError("TELEGRAM_BOT_TOKEN environment variable not set.")
-if OWNER_ID is None:
-    raise ValueError("OWNER_TELEGRAM_ID environment variable not set.")
+
+# دعم أكثر من مدير: أرقام مفصولة بفاصلة (مثال: 7032076289,937732530)
+OWNER_IDS = set()
+for x in _owner_raw.split(","):
+    part = x.strip()
+    if part.isdigit():
+        OWNER_IDS.add(int(part))
+if not OWNER_IDS:
+    raise ValueError("OWNER_TELEGRAM_ID must be set (one or more numbers, comma-separated).")
+
+# أول مدير في القائمة (للتوافق مع الأماكن التي ترسل لمدير واحد فقط إن لزم)
+OWNER_ID = next(iter(OWNER_IDS))
+
+
+def is_owner(user_id):
+    """التحقق إذا كان المستخدم من المديرين."""
+    try:
+        return int(user_id) in OWNER_IDS
+    except (ValueError, TypeError):
+        return False
 
 # دالة لتنسيق الأرقام العشرية
 def format_float(value):
@@ -241,7 +259,6 @@ def get_delivery_price(address):
 async def save_data_in_background(context: ContextTypes.DEFAULT_TYPE):
     schedule_save_global()
     logger.info("Data save scheduled in background.")
-
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.message.from_user.id)
@@ -477,7 +494,6 @@ async def show_buttons(chat_id, context, user_id, order_id, confirmation_message
         logger.error(f"Error in show_buttons: {e}", exc_info=True)
         await context.bot.send_message(chat_id=chat_id, text="⚠️ حدث خطأ في عرض قائمة المنتجات.")
 
-
         
 async def product_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     orders = context.application.bot_data['orders']
@@ -564,7 +580,6 @@ async def cancel_price_entry_callback(update: Update, context: ContextTypes.DEFA
         
     await context.bot.send_message(chat_id=chat_id, text="تم الإلغاء. تكدر تختار منتج ثاني أو تسوي طلب جديد.")
     return ConversationHandler.END
-
 
 async def add_new_product_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -690,8 +705,6 @@ async def confirm_delete_product_by_button_callback(update: Update, context: Con
     await show_buttons(chat_id, context, user_id, order_id) 
     return ConversationHandler.END
 
-
-
 async def cancel_add_product_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -710,7 +723,6 @@ async def cancel_add_product_callback(update: Update, context: ContextTypes.DEFA
     # نرجع نعرض الأزرار الأصلية
     await show_buttons(chat_id, context, user_id, order_id)
     return ConversationHandler.END
-
 
 async def cancel_delete_product_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -823,9 +835,7 @@ async def receive_buy_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ حدث خطأ غير متوقع.")
         return ConversationHandler.END
 
-
         
-
 
 async def receive_new_product_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.effective_user.id)
@@ -875,7 +885,6 @@ async def receive_new_product_name(update: Update, context: ContextTypes.DEFAULT
     # عرض الأزرار المحدثة (التي تعتمد على الـ index لمنع أخطاء طول البيانات)
     await show_buttons(chat_id, context, user_id, order_id)
     return ConversationHandler.END
-
 
 async def request_places_count_standalone(chat_id, context: ContextTypes.DEFAULT_TYPE, user_id: str, order_id: str):
     orders = context.application.bot_data['orders']
@@ -1141,10 +1150,11 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
         # 2. إرسال للجروب (فاتورة الزبون)
         await context.bot.send_message(chat_id=chat_id, text=customer_text)
 
-        # 3. إرسال للمدير (3 رسائل كما طلبت)
-        await context.bot.send_message(chat_id=OWNER_ID, text=purchase_text) # فاتورة الشراء
-        await context.bot.send_message(chat_id=OWNER_ID, text=admin_text)    # فاتورة الإدارة
-        await context.bot.send_message(chat_id=OWNER_ID, text=f"📋 نسخة الجروب:\n\n{customer_text}") # نسخة الجروب
+        # 3. إرسال لكل المديرين (3 رسائل لكل واحد)
+        for owner_id in OWNER_IDS:
+            await context.bot.send_message(chat_id=owner_id, text=purchase_text)  # فاتورة الشراء
+            await context.bot.send_message(chat_id=owner_id, text=admin_text)     # فاتورة الإدارة
+            await context.bot.send_message(chat_id=owner_id, text=f"📋 نسخة الجروب:\n\n{customer_text}")  # نسخة الجروب
 
         # تنظيف رسائل المجهز
         if user_id in context.user_data and 'messages_to_delete' in context.user_data[user_id]:
@@ -1230,9 +1240,6 @@ async def finish_editing_callback(update: Update, context: ContextTypes.DEFAULT_
     await request_places_count_standalone(chat_id, context, user_id, order_id)
     return ConversationHandler.END
 
-
-
-
 async def cancel_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -1281,14 +1288,13 @@ async def start_new_order_callback(update: Update, context: ContextTypes.DEFAULT
         await update.callback_query.message.reply_text("😐زربة ماكدرت اسوي طلبية جديده اشو بالله دسوي مره ثانيه علكولتهم حاول من جديد.")
         return ConversationHandler.END
 
-
 # الدوال الخاصة بالتقارير والأرباح (ستُجزأ لاحقاً إلى features/reports.py)
 async def show_profit(update: Update, context: ContextTypes.DEFAULT_TYPE):
     orders = context.application.bot_data['orders'] # نجيب كل الطلبيات
     pricing = context.application.bot_data['pricing'] # نحتاج الأسعار لحساب الربح
 
     try:
-        if str(update.message.from_user.id) != str(OWNER_ID):
+        if not is_owner(update.message.from_user.id):
             await update.message.reply_text("😏لاتاكل خره ماتكدر تسوي هالشي.")
             return
 
@@ -1325,7 +1331,7 @@ async def show_profit(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def reset_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
-        if str(update.message.from_user.id) != str(OWNER_ID):
+        if not is_owner(update.message.from_user.id):
             await update.message.reply_text("😏لاتاكل خره ماتكدر تسوي هالشي.")
             return
         
@@ -1351,7 +1357,7 @@ async def confirm_reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
         query = update.callback_query
         await query.answer() # ✅ هذا السطر مهم جداً حتى يختفي التحميل من الزر
 
-        if str(query.from_user.id) != str(OWNER_ID):
+        if not is_owner(query.from_user.id):
             await query.edit_message_text("😏لاتاكل خره ماتكدر تسوي هالشي.")
             return
 
@@ -1403,7 +1409,7 @@ async def show_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
     invoice_numbers = context.application.bot_data['invoice_numbers']
 
     try:
-        if str(update.message.from_user.id) != str(OWNER_ID):
+        if not is_owner(update.message.from_user.id):
             await update.message.reply_text("لاتاكل خره هذا الامر للمدير افتهمت لولا.")
             return
 
@@ -1478,7 +1484,7 @@ async def show_all_purchase_reports(update: Update, context: ContextTypes.DEFAUL
     orders = context.application.bot_data.get('orders', {})
     pricing = context.application.bot_data.get('pricing', {})
     
-    if str(update.effective_user.id) != str(OWNER_ID):
+    if not is_owner(update.effective_user.id):
         await update.message.reply_text("😏 لاتاكل خره، هذا الأمر للمدير بس.")
         return
 
@@ -1568,8 +1574,8 @@ async def clear_chat_messages(update: Update, context: ContextTypes.DEFAULT_TYPE
     user_id = str(update.effective_user.id)
     chat_id = update.effective_chat.id
     
-    # التأكد أن الشخص هو صاحب البوت فقط
-    if user_id != str(OWNER_ID):
+    # التأكد أن الشخص من المديرين فقط
+    if not is_owner(user_id):
         await update.message.reply_text("😏 لاتاكل خره، بس المالك يكدر ينظف الجات.")
         return
 
@@ -1778,16 +1784,13 @@ async def delete_order_command(update: Update, context: ContextTypes.DEFAULT_TYP
     user_id = str(update.message.from_user.id)
     chat_id = update.effective_chat.id
 
-    if user_id != str(OWNER_ID):
+    if not is_owner(user_id):
         await update.message.reply_text("😏لاتاكل خره ماتكدر تسوي هالشي. هذا الأمر متاح للمالك فقط.")
         return ConversationHandler.END
 
     await update.message.reply_text("تمام، دزلي رقم الزبون للطلبية اللي تريد تمسحها:")
     context.user_data[user_id] = {"deleting_order": True}  # إعادة تهيئة user_data
     return ASK_CUSTOMER_PHONE_NUMBER_FOR_DELETION
-
-
-
 
 async def receive_customer_phone_for_deletion(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.message.from_user.id)
@@ -1796,8 +1799,8 @@ async def receive_customer_phone_for_deletion(update: Update, context: ContextTy
 
     logger.info(f"[{chat_id}] Received phone number '{customer_phone_number}' for order deletion from user {user_id}.")
 
-    # تأكد من أن المستخدم يمتلك صلاحيات المالك
-    if user_id != str(OWNER_ID):
+    # تأكد من أن المستخدم من المديرين
+    if not is_owner(user_id):
         await update.message.reply_text("😏لاتاكل خره ماتكدر تسوي هالشي. هذا الأمر متاح للمالك فقط.")
         context.user_data[user_id].pop("deleting_order", None)
         return ConversationHandler.END
@@ -1846,8 +1849,6 @@ async def receive_customer_phone_for_deletion(update: Update, context: ContextTy
     )
     return ASK_FOR_DELETION_CONFIRMATION
 
-
-
 async def handle_order_selection_for_deletion(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -1856,7 +1857,7 @@ async def handle_order_selection_for_deletion(update: Update, context: ContextTy
     chat_id = query.message.chat_id
     data = query.data
 
-    if user_id != str(OWNER_ID):
+    if not is_owner(user_id):
         await query.edit_message_text("عذراً، لا تملك صلاحية لتنفيذ هذا الأمر.")
         context.user_data[user_id].pop("deleting_order", None)
         return ConversationHandler.END
