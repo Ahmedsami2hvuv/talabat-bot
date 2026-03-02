@@ -1,13 +1,46 @@
 import json
 import os
 import logging
-
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 
-# ✅ إعداد الـ logging لهذا الملف (للتتبع)
+# ✅ تفعيل الـ logging للحصول على تفاصيل الأخطاء والعمليات
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
+)
 logger = logging.getLogger(__name__)
 
+# ----------------------------------------------------------------------
+# ⭐⭐ تصحيح جلب التوكن ومعرّف المالك (حل مشكلة InvalidToken) ⭐⭐
+# ----------------------------------------------------------------------
+
+TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+_owner_raw = os.getenv("OWNER_TELEGRAM_ID", "").strip()
+OWNER_PHONE_NUMBER = os.getenv("OWNER_TELEGRAM_PHONE_NUMBER", "+9647733921468")
+
+if TOKEN:
+    # الحل الدائم: إزالة أي مسافات مخفية قد تسبب خطأ InvalidToken
+    TOKEN = TOKEN.strip() 
+else:
+    raise ValueError("TELEGRAM_BOT_TOKEN environment variable not set.")
+
+if not _owner_raw:
+    raise ValueError("OWNER_TELEGRAM_ID environment variable not set.")
+
+# دعم أكثر من مدير: أرقام مفصولة بفاصلة (مثال: 7032076289,937732530)
+OWNER_IDS = set()
+for x in _owner_raw.split(","):
+    part = x.strip()
+    if part.isdigit():
+        OWNER_IDS.add(int(part))
+if not OWNER_IDS:
+    raise ValueError("OWNER_TELEGRAM_ID must be one or more numbers (comma-separated).")
+
+# للتوافق مع أي كود يتوقع رقماً واحداً (مثل إرسال رسالة لمالك واحد)
+OWNER_ID = next(iter(OWNER_IDS))
+
+# ----------------------------------------------------------------------
 # ✅ تعريف مسار الملف المحلي للمناطق
 # بما أن الملف هو data/delivery_zones.json، سنبني المسار إليه
 # os.path.dirname(__file__) يعطي مسار الملف الحالي (features)
@@ -15,8 +48,6 @@ logger = logging.getLogger(__name__)
 CURRENT_DIR = os.path.dirname(__file__)
 PARENT_DIR = os.path.dirname(CURRENT_DIR) # هذا يرجع للمجلد الرئيسي (اللي بيه data folder)
 DELIVERY_ZONES_FILE_PATH = os.path.join(PARENT_DIR, "data", "delivery_zones.json")
-
-
 # دالة لتحميل بيانات المناطق من الملف المحلي.
 def load_zones():
     logger.info(f"Attempting to load zones from local file: {DELIVERY_ZONES_FILE_PATH}")
@@ -81,7 +112,3 @@ def get_delivery_price(order_title_line):
     
     logger.info(f"No matching delivery zone found in title '{order_title_line}'. Returning 0.")
     return 0
-
-# الدوال الخاصة بإدارة المناطق من البوت (ask_zone_name, handle_zone_edit, add_zones_bulk)
-# لا داعي لوجودها بما أن التعديل سيتم يدويا على GitHub.
-# يفضل حذفها من main.py أيضاً.
