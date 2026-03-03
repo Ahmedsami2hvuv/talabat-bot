@@ -1051,20 +1051,25 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
         total_buy = 0.0
         total_sell = 0.0
         
-        purchase_details = [] # لتفاصيل فاتورة الشراء
-        admin_details = []    # لتفاصيل فاتورة الإدارة
+        admin_details = []    # لتفاصيل فاتورة الإدارة (الأرباح)
+        admin_detail_lines = []  # لرسالة الإدارة التفصيلية: كل صنف مع من جهزه
+        all_supplier_ids = set() # كل المجهزين الذين شاركوا بهذه الطلبية
         
-        # 1. حساب المنتجات وتفاصيلها
+        # 1. حساب المنتجات وتفاصيلها + تجميع المجهزين
         for p_name in order["products"]:
             data = pricing.get(order_id, {}).get(p_name, {})
             buy = float(data.get("buy", 0.0))
             sell = float(data.get("sell", 0.0))
             profit = sell - buy
+            p_worker_id = str(data.get("prepared_by_id", ""))
+            p_worker_name = data.get("prepared_by_name", "شخص آخر")
             
             total_buy += buy
             total_sell += sell
             
-            purchase_details.append(f"  - {p_name}: {format_float(buy)}")
+            if p_worker_id:
+                all_supplier_ids.add(p_worker_id)
+            admin_detail_lines.append(f"  • {p_name}: {format_float(buy)} - {p_worker_name}")
             admin_details.append(f"- {p_name}: شراء {format_float(buy)} | بيع {format_float(sell)} | ربح {format_float(profit)}")
 
         # 2. جلب كلفة التوصيل والمحلات
@@ -1074,18 +1079,63 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
         
         grand_total = total_sell + extra_cost + delivery
 
-        # --- أ. بناء فاتورة الشراء (للمجهز والمدير) ---
-        sup_msg = [
-            f"فاتورة الشراء:🧾💸",
-            f"👤 المجهز: {current_name} {username}",
+        # --- أ. بناء وإرسال رسالة تفصيلية لكل مجهز شارك بالطلبية ---
+        supplier_totals = {}  # اسم المجهز -> المبلغ الكلي الذي دفعه (لرسالة الإدارة)
+        for s_id in all_supplier_ids:
+            try:
+                sup_chat = await context.bot.get_chat(int(s_id))
+                sup_name = sup_chat.first_name
+                sup_username = f"(@{sup_chat.username})" if sup_chat.username else ""
+            except Exception:
+                sup_name = "مجهز"
+                sup_username = ""
+            supplier_details = []
+            others_details = {}
+            for p_name in order["products"]:
+                data = pricing.get(order_id, {}).get(p_name, {})
+                buy = float(data.get("buy", 0.0))
+                p_worker_id = str(data.get("prepared_by_id", ""))
+                p_worker_name = data.get("prepared_by_name", "شخص آخر")
+                if p_worker_id == str(s_id):
+                    supplier_details.append(f"  • {p_name}: {format_float(buy)}  انت")
+                else:
+                    supplier_details.append(f"  • {p_name}: {format_float(buy)} جهزه ({p_worker_name})")
+                    if buy > 0:
+                        others_details[p_worker_name] = others_details.get(p_worker_name, 0.0) + buy
+            deduction_total = sum(others_details.values())
+            my_amount = total_buy - deduction_total
+            supplier_totals[sup_name] = my_amount
+            supplier_msg = [
+                f"فاتورة الشراء:🧾💸",
+                f"👤 المجهز: {sup_name} {sup_username}",
+                f"رقم الفاتورة🔢: {invoice}",
+                f"عنوان الزبون🏠: {order['title']}",
+                f"رقم الزبون📞: {phone_number}",
+                f"\n\nتفاصيل الشراء:🗒️💸",
+                *supplier_details,
+                f"\n💰 مجموع الطلبية: {format_float(total_buy)}"
+            ]
+            for other_name, amt in others_details.items():
+                supplier_msg.append(f"ناقص تجهيز ({other_name}) {format_float(amt)}")
+            supplier_msg.append(f"المبلغ الذي دفعته انت = {format_float(my_amount)}")
+            supplier_invoice_text = "\n".join(supplier_msg)
+            await context.bot.send_message(chat_id=int(s_id), text=supplier_invoice_text)
+
+        # --- أ٢. بناء رسالة الإدارة التفصيلية (كل صنف من جهزه + كل مجهز شكد دفع) ---
+        admin_detailed_lines = [
+            "فاتورة الشراء (تفاصيل المجهزين):🧾💸",
             f"رقم الفاتورة🔢: {invoice}",
             f"عنوان الزبون🏠: {order['title']}",
             f"رقم الزبون📞: {phone_number}",
             f"\n\nتفاصيل الشراء:🗒️💸",
-            *purchase_details,
-            f"\nمجموع كلفة الشراء للطلبية:💸 {format_float(total_buy)}"
+            *admin_detail_lines,
+            f"\n💰 مجموع الطلبية: {format_float(total_buy)}",
+            "-----------------------------------",
+            "المبلغ الكلي لكل مجهز:"
         ]
-        purchase_text = "\n".join(sup_msg)
+        for sup_name, amt in supplier_totals.items():
+            admin_detailed_lines.append(f"  • {sup_name}: {format_float(amt)} دينار 💸")
+        admin_detailed_text = "\n".join(admin_detailed_lines)
 
         # --- ب. بناء فاتورة الإدارة (للمدير فقط) ---
         admin_msg = [
@@ -1143,17 +1193,15 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
         customer_text = "\n".join(customer_lines)
 
         # --- 3. إرسال الرسائل ---
-        
-        # 1. إرسال للمجهز (فاتورة الشراء)
-        await context.bot.send_message(chat_id=user_id, text=purchase_text)
+        # (إرسال لكل مجهز تم أعلاه داخل الحلقة)
 
         # 2. إرسال للجروب (فاتورة الزبون)
         await context.bot.send_message(chat_id=chat_id, text=customer_text)
 
-        # 3. إرسال لكل المديرين (3 رسائل لكل واحد)
+        # 3. إرسال لكل المديرين: أولاً التفصيلية ثم فاتورة الأرباح ثم نسخة الجروب
         for owner_id in OWNER_IDS:
-            await context.bot.send_message(chat_id=owner_id, text=purchase_text)  # فاتورة الشراء
-            await context.bot.send_message(chat_id=owner_id, text=admin_text)     # فاتورة الإدارة
+            await context.bot.send_message(chat_id=owner_id, text=admin_detailed_text)  # تفاصيل المجهزين + كل مجهز شكد دفع
+            await context.bot.send_message(chat_id=owner_id, text=admin_text)           # فاتورة الإدارة (الأرباح) - كما هي
             await context.bot.send_message(chat_id=owner_id, text=f"📋 نسخة الجروب:\n\n{customer_text}")  # نسخة الجروب
 
         # تنظيف رسائل المجهز
