@@ -1,4 +1,5 @@
 import os
+import re
 import json
 import uuid
 import time
@@ -16,8 +17,12 @@ from telegram.ext import (
 
 # ✅ استيراد الدوال الخاصة بالمناطق من الملف الجديد
 from features.delivery_zones import (
-    list_zones, get_delivery_price
+    list_zones, get_delivery_price, is_zone_known, get_matching_zone_name,
+    get_closest_zone_name, get_closest_zone_names, get_all_close_zones_from_words,
+    get_close_zones_with_words, match_text_to_suggested_zones
 )
+# ✅ تصنيف المنتجات (سمك، خضروات، لحم) لبناء فواتير منفصلة
+from features.product_categories import is_fish, is_vegetable_fruit, is_meat
 
 # ✅ تفعيل الـ logging للحصول على تفاصيل الأخطاء والعمليات
 logging.basicConfig(
@@ -238,23 +243,6 @@ async def delete_message_in_background(context: ContextTypes.DEFAULT_TYPE, chat_
     except Exception as e:
         logger.warning(f"Could not delete message {message_id} from chat {chat_id} in background: {e}.")
 
-# تحميل ملف المناطق واسعارها 
-def load_delivery_zones():
-    try:
-        with open("data/delivery_zones.json", "r") as f:
-            zones = json.load(f)
-            return zones
-    except Exception as e:
-        print(f"Error loading delivery zones: {e}")
-        return {}
-        # استخراج سعر التوصيل بناءً على العنوان
-def get_delivery_price(address):
-    delivery_zones = load_delivery_zones()
-    for zone, price in delivery_zones.items():
-        if zone in address:
-            return price
-    return 0  # إذا لم يتم العثور على العنوان في المناطق
-
 # دالة مساعدة لحفظ البيانات في الخلفية
 async def save_data_in_background(context: ContextTypes.DEFAULT_TYPE):
     schedule_save_global()
@@ -337,6 +325,147 @@ async def edited_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"[{update.effective_chat.id}] Error in edited_message: {e}", exc_info=True)
         await update.edited_message.reply_text("طك بطك ماكدر اعدل تريد سوي طلب جديد.")
 
+
+async def handle_region_suggestion_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالجة أزرار اختيار المنطقة (كل منطقة قريبة بزر، أو لا اكتب بنفسك)."""
+    query = update.callback_query
+    await query.answer()
+    user_id = str(query.from_user.id)
+    data = query.data
+    orders = context.application.bot_data.get("orders", {})
+    ud = context.user_data.setdefault(user_id, {})
+
+    # اختار منطقة من الأزرار (pick_zone_ORDERID_0، pick_zone_ORDERID_1، ...)
+    if data.startswith("pick_zone_"):
+        rest = data.replace("pick_zone_", "", 1)
+        parts = rest.rsplit("_", 1)
+        if len(parts) != 2:
+            return
+        order_id, idx_str = parts
+        try:
+            idx = int(idx_str)
+        except ValueError:
+            return
+        if order_id not in orders:
+            await query.edit_message_text("الطلبية ما عاد موجودة.")
+            ud.pop("pending_region_order_id", None)
+            ud.pop("pending_region_suggested_zones", None)
+            ud.pop("pending_region_suggested_pairs", None)
+            return
+        zones_list = ud.get("pending_region_suggested_zones") or []
+        suggested_pairs = ud.get("pending_region_suggested_pairs") or []
+        if idx < 0 or idx >= len(zones_list):
+            return
+        chosen_zone = zones_list[idx]
+        word_to_remove = suggested_pairs[idx][1] if idx < len(suggested_pairs) else None
+        orders[order_id]["title"] = chosen_zone
+        if word_to_remove and "products" in orders[order_id]:
+            products = orders[order_id]["products"]
+            orders[order_id]["products"] = [p for p in products if p != word_to_remove]
+        ud.pop("pending_region_order_id", None)
+        ud.pop("pending_region_suggested_zones", None)
+        ud.pop("pending_region_suggested_pairs", None)
+        context.application.create_task(save_data_in_background(context))
+        await query.edit_message_text(f"تم اختيار المنطقة: *{chosen_zone}*", parse_mode="Markdown")
+        if orders[order_id].get("phone_number") == "مطلوب":
+            ud["pending_phone_order_id"] = order_id
+        await show_buttons(query.message.chat_id, context, user_id, order_id)
+        return
+
+    # زر "لا — اكتب اسم المنطقه"
+    if data.startswith("reject_region_"):
+        order_id = data.replace("reject_region_", "")
+        ud.pop("pending_region_suggested_zones", None)
+        ud.pop("pending_region_suggested_pairs", None)
+        await query.edit_message_text("طيب اكتبلي اسم المنطقه.")
+        # pending_region_order_id يبقى عشان الرسالة الجاية ناخذها كاسم منطقة
+
+
+def _extract_phone_from_text(text):
+    """
+    يدور بين أسطر/كلمات الرسالة ويطلع أول رقم زبون (حتى لو +964 776 403 1859)
+    ويعدّله إلى صيغة 07764031859.
+    """
+    if not text or not text.strip():
+        return "مطلوب"
+    # إزالة مسافات وشرطات عشان نلقط الرقم من أي شكل (+964 776 403 1859 → 07764031859)
+    raw = re.sub(r"[\s\-]", "", text)
+    # نمط: +964 7xxxxxxxx أو 07xxxxxxxx أو 7xxxxxxxx (رقم عراقي 10 خانات بعد 7)
+    m = re.search(r"(?:\+?964)?0?7\d{9}", raw)
+    if m:
+        digits = re.sub(r"\D", "", m.group(0))
+        if digits.startswith("964"):
+            digits = digits[3:]
+        if digits.startswith("7") and len(digits) >= 10:
+            return "0" + digits[:10]
+        if digits.startswith("0") and len(digits) >= 11:
+            return digits[:11]
+    m2 = re.search(r"7\d{9}", raw)
+    if m2:
+        return "0" + m2.group(0)
+    m3 = re.search(r"07\d{9}", raw)
+    if m3:
+        return m3.group(0)
+    return "مطلوب"
+
+
+def _parse_site_order_format(raw_text):
+    """
+    يحوّل طلب بصيغة الموقع (اسم الزبون، العنوان، معلومات الطلب، الاسم/الكمية/السعر)
+    إلى: title, phone_number, products.
+    يرجع None إذا الرسالة مو بهذه الصيغة.
+    """
+    if not raw_text or "معلومات الطلب" not in raw_text and "الاسم:" not in raw_text:
+        return None
+    text = raw_text.strip()
+    if "العنوان:" not in text and "اسم الزبون:" not in text:
+        return None
+
+    customer_name = ""
+    address = ""
+    products = []
+
+    lines = [ln.strip() for ln in text.split("\n") if ln.strip()]
+
+    for line in lines:
+        if line.startswith("اسم الزبون:"):
+            customer_name = line.split(":", 1)[1].strip()
+        elif line.startswith("العنوان:"):
+            address = line.split(":", 1)[1].strip()
+        elif line.startswith("الاسم:"):
+            name_part = line.split(":", 1)[1].strip()
+            if name_part and name_part not in ("الكمية", "السعر", "السعر الكلي") and len(name_part) >= 2:
+                products.append(name_part)
+
+    # تجاهل أسطر مثل "******" و "السعر الكلي" و "الكمية:" و "السعر:" (ما نعدها منتجات)
+    if not address and not customer_name:
+        return None
+
+    # اسم المنطقة: ناخذه من مقابيل "العنوان" — نطابق أول كلمة أو كلمتين فقط (المنطقة غالباً بالبداية) عشان كوت صحي→كوت الصلحي، بي عسكري→حي العسكري
+    if address:
+        try:
+            tokens = address.strip().split()
+            address_phrase = " ".join(tokens[:2]) if len(tokens) >= 2 else (tokens[0] if tokens else address)
+            if address_phrase and len(address_phrase) >= 2:
+                canonical_zone = get_closest_zone_name(address_phrase, cutoff=0.5)
+                title = canonical_zone if canonical_zone else address
+            else:
+                title = address
+        except Exception:
+            title = address
+    else:
+        zone = get_matching_zone_name(text)
+        title = zone if zone else (customer_name or "عنوان غير معروف")
+
+    # رقم الزبون: ندوّر في كل النص ونطلع أول رقم ييشبه رقم زبون
+    phone_number = _extract_phone_from_text(text)
+
+    if not products:
+        return None
+
+    return {"title": title, "phone_number": phone_number, "products": products, "address": address}
+
+
 async def process_order(update, context, message, edited=False):
     orders = context.application.bot_data['orders']
     pricing = context.application.bot_data['pricing']
@@ -344,24 +473,134 @@ async def process_order(update, context, message, edited=False):
     last_button_message = context.application.bot_data['last_button_message']
     
     user_id = str(message.from_user.id)
-    lines = [line.strip() for line in message.text.strip().split('\n') if line.strip()]
-    
-    # ✅ تعديل التحقق من عدد الأسطر: الآن نتوقع 3 أسطر على الأقل (عنوان، رقم هاتف، منتجات)
-    if len(lines) < 3:
-        if not edited:
-            await message.reply_text("باعلي تاكد انك تكتب الطلبية ك التالي اول سطر هو عنوان الزبون وثاني سطر هو رقم الزبون وراها المنتجات كل سطر بي منتج يالله فر ويلك وسوي الطلب.")
+    raw_text = message.text.strip()
+    lines = [line.strip() for line in raw_text.split('\n') if line.strip()]
+
+    # ✅ إذا كان البوت ينتظر اسم المنطقة — المستخدم يقدر يضغط زر أو يكتب اسم المنطقة مباشرة (بدون ما يضغط "لا")
+    ud = context.user_data.setdefault(user_id, {})
+    pending_region_oid = ud.get("pending_region_order_id")
+    if not edited and pending_region_oid and pending_region_oid in orders:
+        new_region = raw_text.strip()
+        if new_region and len(new_region) < 200:  # رسالة معقولة كاسم منطقة
+            suggested_pairs = ud.get("pending_region_suggested_pairs") or []
+            suggested_zone_names = [z for z, _ in suggested_pairs]
+            # إذا الكتابة مطابقة جداً لأحد المناطق المقترحة → نعاملها كانه اختارها ونسحب الكلمة من المنتجات
+            match = match_text_to_suggested_zones(new_region, suggested_zone_names, cutoff=0.8)
+            if match is not None:
+                idx, chosen_zone = match
+                word_to_remove = suggested_pairs[idx][1] if idx < len(suggested_pairs) else None
+                orders[pending_region_oid]["title"] = chosen_zone
+                if word_to_remove and "products" in orders[pending_region_oid]:
+                    products = orders[pending_region_oid]["products"]
+                    orders[pending_region_oid]["products"] = [p for p in products if p != word_to_remove]
+                ud.pop("pending_region_order_id", None)
+                ud.pop("pending_region_suggested_zones", None)
+                ud.pop("pending_region_suggested_pairs", None)
+                ud.pop("pending_region_suggested_zone", None)
+                context.application.create_task(save_data_in_background(context))
+                await message.reply_text(f"تم اختيار المنطقة: *{chosen_zone}*", parse_mode="Markdown")
+                if orders[pending_region_oid].get("phone_number") == "مطلوب":
+                    ud["pending_phone_order_id"] = pending_region_oid
+                await show_buttons(message.chat_id, context, user_id, pending_region_oid)
+                return
+            # إذا المنطقة معروفة (من القاعدة) لكن ما طابقت المقترحات — نحدّث العنوان فقط
+            if is_zone_known(new_region):
+                orders[pending_region_oid]["title"] = new_region
+                ud.pop("pending_region_order_id", None)
+                ud.pop("pending_region_suggested_zones", None)
+                ud.pop("pending_region_suggested_pairs", None)
+                ud.pop("pending_region_suggested_zone", None)
+                context.application.create_task(save_data_in_background(context))
+                await message.reply_text(f"تم تحديث المنطقة إلى: *{new_region}*", parse_mode="Markdown")
+                if orders[pending_region_oid].get("phone_number") == "مطلوب":
+                    ud["pending_phone_order_id"] = pending_region_oid
+                await show_buttons(message.chat_id, context, user_id, pending_region_oid)
+                return
+            # منطقة غير مسجلة
+            await message.reply_text(f"المنطقة *{new_region}* غير مسجلة أيضاً. أرسل اسم المنطقة الصحيح (اكتب *مناطق* لرؤية القائمة).", parse_mode="Markdown")
+            ud["pending_region_order_id"] = pending_region_oid
         return
 
-    title = lines[0]
-    
-    # ✅ منطق جديد لمعالجة رقم الهاتف
-    phone_number_raw = lines[1].strip().replace(" ", "") # إزالة المسافات
-    if phone_number_raw.startswith("+964"):
-        phone_number = "0" + phone_number_raw[4:] # استبدال +964 بـ 0
+    # ✅ إذا الطلبية السابقة كانت من الموقع ورقم الزبون "مطلوب"، والرسالة الحالية رقم فقط → نحدّث الرقم
+    if not edited and len(lines) == 1:
+        one_line = lines[0].replace(" ", "").replace("+", "").replace("-", "")
+        if one_line.isdigit() and len(one_line) >= 9:
+            pending_oid = context.user_data.get(user_id, {}).get("pending_phone_order_id")
+            if pending_oid and pending_oid in orders and orders[pending_oid].get("phone_number") == "مطلوب":
+                phone_number_raw = lines[0].strip().replace(" ", "")
+                if phone_number_raw.startswith("+964"):
+                    phone_number = "0" + phone_number_raw[4:]
+                else:
+                    phone_number = phone_number_raw.replace("+", "")
+                orders[pending_oid]["phone_number"] = phone_number
+                context.user_data[user_id].pop("pending_phone_order_id", None)
+                context.application.create_task(save_data_in_background(context))
+                await message.reply_text(f"تم تحديث رقم الزبون إلى `{phone_number}`.", parse_mode="Markdown")
+                await show_buttons(message.chat_id, context, user_id, pending_oid)
+                return
+
+    # ✅ محاولة قراءة صيغة طلب الموقع (اسم الزبون، العنوان، معلومات الطلب، الاسم/الكمية/السعر)
+    site_parsed = _parse_site_order_format(message.text)
+    zone_search_text = raw_text  # للنص العادي نبحث في كل الرسالة
+    if site_parsed:
+        title = site_parsed["title"]
+        phone_number = site_parsed["phone_number"]
+        products = site_parsed["products"]
+        # للطلب من الموقع نبحث عن المناطق القريبة فقط في سطر العنوان
+        if site_parsed.get("address"):
+            zone_search_text = site_parsed["address"]
     else:
-        phone_number = phone_number_raw.replace("+", "") # إذا ماكو +964، بس نضمن إزالة أي علامة +
-    
-    products = [p.strip() for p in lines[2:] if p.strip()] # ✅ المنتجات تبدأ من السطر الثالث
+        # الصيغة العادية: الرقم من أي سطر، المنطقة من أي سطر (مطابقة مع قاعدة المناطق)، الباقي منتجات
+        if len(lines) < 1:
+            if not edited:
+                await message.reply_text("باعلي تاكد انك تكتب الطلبية: عنوان أو منطقة، رقم الزبون، وكل سطر منتج. يالله فر ويلك.")
+            return
+
+        phone_number = _extract_phone_from_text(raw_text)
+        try:
+            zone = get_matching_zone_name(raw_text)
+        except Exception as e:
+            logger.warning(f"get_matching_zone_name failed: {e}")
+            zone = None
+        if zone:
+            title = zone
+        else:
+            region_candidate = None
+            try:
+                for line in lines:
+                    line_clean = line.strip()
+                    if not line_clean:
+                        continue
+                    if _extract_phone_from_text(line_clean) != "مطلوب":
+                        continue
+                    if re.sub(r"[\d\s\.]", "", line_clean) == "" and len(line_clean) > 4:
+                        continue
+                    if get_closest_zone_names(line_clean, n=1, cutoff=0.4):
+                        region_candidate = line_clean
+                        break
+            except Exception as e:
+                logger.warning(f"region_candidate loop failed: {e}")
+            title = region_candidate if region_candidate else (lines[0] if lines else "عنوان غير معروف")
+
+        # المنتجات: نستبعد سطر الرقم وأي سطر فيه كلمة قريبة من اسم منطقة
+        products = []
+        for line in lines:
+            if not line.strip():
+                continue
+            if phone_number != "مطلوب" and _extract_phone_from_text(line) == phone_number:
+                continue
+            if zone and zone in line:
+                continue
+            if re.sub(r"[\d\s\.]", "", line) == "" and len(line.strip()) > 5:
+                continue
+            products.append(line.strip())
+
+        try:
+            if not zone and lines and not get_closest_zone_names(title or "", n=1, cutoff=0.4):
+                title = lines[0]
+        except Exception:
+            if not zone and lines:
+                title = lines[0]
 
     if not products:
         if not edited:
@@ -397,6 +636,8 @@ async def process_order(update, context, message, edited=False):
         } 
         pricing[order_id] = {p: {} for p in products}
         invoice_numbers[order_id] = invoice_no
+        if phone_number == "مطلوب":
+            context.user_data.setdefault(user_id, {})["pending_phone_order_id"] = order_id
         logger.info(f"Created new order {order_id} for user {user_id}.")
     else: 
         old_products = set(orders[order_id].get("products", []))
@@ -420,9 +661,48 @@ async def process_order(update, context, message, edited=False):
         
     context.application.create_task(save_data_in_background(context))
     
+    # ✅ البوت يقرا كل كلمات الرسالة ويطابقها بقاعدة المناطق ويطلع: منطقة قريبة لـ كلمة
+    if is_new_order and not is_zone_known(title):
+        ud = context.user_data.setdefault(user_id, {})
+        ud["pending_region_order_id"] = order_id
+        try:
+            # طلب الموقع: نبحث فقط في سطر العنوان؛ غيره: نبحث في كل الرسالة. cutoff 0.5 عشان كوت صحي→كوت الصلحي، بي عسكري→حي العسكري
+            suggested_pairs = get_close_zones_with_words(zone_search_text, per_word_n=4, cutoff=0.5)
+        except Exception as e:
+            logger.warning(f"get_close_zones_with_words failed: {e}", exc_info=True)
+            suggested_pairs = []
+        if suggested_pairs:
+            suggested_pairs = suggested_pairs[:15]
+            ud["pending_region_suggested_zones"] = [zone for zone, _ in suggested_pairs]
+            ud["pending_region_suggested_pairs"] = suggested_pairs
+            lines = [
+                "ما عيّنت المنطقة، عندك مناطق قريبة بقاعدة البيانات — اختار الصح أو دوس لا واكتب اسم المنطقة",
+                "",
+            ]
+            for zone, word in suggested_pairs:
+                lines.append(f"• {zone} قريبة لـ {word}")
+            kb_rows = []
+            for i, (zone_name, _) in enumerate(suggested_pairs):
+                kb_rows.append([InlineKeyboardButton(zone_name, callback_data=f"pick_zone_{order_id}_{i}")])
+            kb_rows.append([InlineKeyboardButton("لا — اكتب اسم المنطقه", callback_data=f"reject_region_{order_id}")])
+            kb = InlineKeyboardMarkup(kb_rows)
+            await message.reply_text(
+                "\n".join(lines),
+                reply_markup=kb
+            )
+        else:
+            await message.reply_text(
+                "ما طابقت أي كلمة من رسالتك مع قاعدة المناطق.\n\nأرسل اسم المنطقة الصحيح (اكتب *مناطق* لرؤية القائمة) — بعدها راح تطلع أزرار التسعير.",
+                parse_mode="Markdown"
+            )
+        return
+
     # ✅ تعديل رسالة الاستلام لتضمين رقم الهاتف بالشكل الجديد
     if is_new_order:
-        await message.reply_text(f"طلب : *{title}*\n(الرقم: `{phone_number}` )\n(عدد المنتجات: {len(products)})", parse_mode="Markdown")
+        reply_msg = f"طلب : *{title}*\n(الرقم: `{phone_number}`)\n(عدد المنتجات: {len(products)})"
+        if phone_number == "مطلوب":
+            reply_msg += "\n\n📱 رقم الزبون ما كان بالرسالة — دز رقم الزبون فقط وراح نحدث الطلبية، أو عدّل الطلبية من الزر."
+        await message.reply_text(reply_msg, parse_mode="Markdown")
         await show_buttons(message.chat_id, context, user_id, order_id)
     else:
         await show_buttons(message.chat_id, context, user_id, order_id, confirmation_message="دهاك حدثنه الطلب. عيني دخل الاسعار الاستاذ حدث الطلب.")
@@ -1160,6 +1440,72 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
             admin_detailed_lines.append(f"  • {sup_name}: {format_float(amt)} دينار 💸")
         admin_detailed_text = "\n".join(admin_detailed_lines)
 
+        # --- فاتورة السمك لوحد (تُرسل للخاص): كل منتج سمك + من جهزه ---
+        fish_lines = []
+        for p_name in order["products"]:
+            if not is_fish(p_name):
+                continue
+            data = pricing.get(order_id, {}).get(p_name, {})
+            buy = float(data.get("buy", 0.0))
+            p_worker_name = data.get("prepared_by_name", "شخص آخر")
+            fish_lines.append(f"  • {p_name}: {format_float(buy)} — جهزه ({p_worker_name})")
+        if fish_lines:
+            fish_invoice_text = (
+                "🐟 فاتورة السمك (تفصيل):🧾\n"
+                f"رقم الفاتورة🔢: {invoice}\n"
+                f"عنوان الزبون🏠: {order['title']}\n"
+                f"رقم الزبون📞: {phone_number}\n\n"
+                "تفاصيل السمك:\n"
+                + "\n".join(fish_lines) +
+                f"\n\n💰 مجموع السمك: {format_float(sum(float(pricing.get(order_id, {}).get(p, {}).get('buy', 0)) for p in order['products'] if is_fish(p)))}"
+            )
+        else:
+            fish_invoice_text = None
+
+        # --- فاتورة الخضروات والفواكه لوحد (تُرسل للخاص) ---
+        veg_lines = []
+        for p_name in order["products"]:
+            if not is_vegetable_fruit(p_name):
+                continue
+            data = pricing.get(order_id, {}).get(p_name, {})
+            buy = float(data.get("buy", 0.0))
+            p_worker_name = data.get("prepared_by_name", "شخص آخر")
+            veg_lines.append(f"  • {p_name}: {format_float(buy)} — جهزه ({p_worker_name})")
+        if veg_lines:
+            veg_invoice_text = (
+                "🥬 فاتورة الخضروات والفواكه:🧾\n"
+                f"رقم الفاتورة🔢: {invoice}\n"
+                f"عنوان الزبون🏠: {order['title']}\n"
+                f"رقم الزبون📞: {phone_number}\n\n"
+                "تفاصيل الخضروات/الفواكه:\n"
+                + "\n".join(veg_lines) +
+                f"\n\n💰 مجموع الخضروات/الفواكه: {format_float(sum(float(pricing.get(order_id, {}).get(p, {}).get('buy', 0)) for p in order['products'] if is_vegetable_fruit(p)))}"
+            )
+        else:
+            veg_invoice_text = None
+
+        # --- فاتورة اللحم لوحد (تُرسل للخاص) ---
+        meat_lines = []
+        for p_name in order["products"]:
+            if not is_meat(p_name):
+                continue
+            data = pricing.get(order_id, {}).get(p_name, {})
+            buy = float(data.get("buy", 0.0))
+            p_worker_name = data.get("prepared_by_name", "شخص آخر")
+            meat_lines.append(f"  • {p_name}: {format_float(buy)} — جهزه ({p_worker_name})")
+        if meat_lines:
+            meat_invoice_text = (
+                "🥩 فاتورة اللحم (تفصيل):🧾\n"
+                f"رقم الفاتورة🔢: {invoice}\n"
+                f"عنوان الزبون🏠: {order['title']}\n"
+                f"رقم الزبون📞: {phone_number}\n\n"
+                "تفاصيل اللحم:\n"
+                + "\n".join(meat_lines) +
+                f"\n\n💰 مجموع اللحم: {format_float(sum(float(pricing.get(order_id, {}).get(p, {}).get('buy', 0)) for p in order['products'] if is_meat(p)))}"
+            )
+        else:
+            meat_invoice_text = None
+
         # --- ب. بناء فاتورة الإدارة (للمدير فقط) ---
         admin_msg = [
             f"فاتورة الإدارة:👨🏻‍💼",
@@ -1179,12 +1525,14 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
         admin_text = "\n".join(admin_msg)
 
         # --- ج. بناء فاتورة الزبون للجروب (مع الحساب المتسلسل) ---
+        # رقم الزبون بصيغة `كود` عشان ينسخ باللمس بدل ما يفتح معلومات الرقم
+        safe_phone = (phone_number or "").replace("`", "'")
         customer_lines = [
             "📋 أبو الأكبر للتوصيل 🚀",
             "-----------------------------------",
             f"فاتورة رقم: #{invoice}",
             f"🏠 عنوان الزبون: {order['title']}",
-            f"📞 رقم الزبون: {phone_number}",
+            f"📞 رقم الزبون: `{safe_phone}`",
             "\n🛍️ المنتجات:  \n"
         ]
         
@@ -1218,14 +1566,20 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
         # --- 3. إرسال الرسائل ---
         # (إرسال لكل مجهز تم أعلاه داخل الحلقة)
 
-        # 2. إرسال للجروب (فاتورة الزبون)
-        await context.bot.send_message(chat_id=chat_id, text=customer_text)
+        # 2. إرسال للجروب (فاتورة الزبون) — Markdown عشان رقم الزبون يظهر كـ code فينسخ باللمس
+        await context.bot.send_message(chat_id=chat_id, text=customer_text, parse_mode="Markdown")
 
-        # 3. إرسال لكل المديرين: أولاً التفصيلية ثم فاتورة الأرباح ثم نسخة الجروب
+        # 3. إرسال لكل المديرين بالخاص: التفصيلية، الأرباح، فاتورة السمك، الخضروات، اللحم، ثم نسخة الجروب
         for owner_id in OWNER_IDS:
             await context.bot.send_message(chat_id=owner_id, text=admin_detailed_text)  # تفاصيل المجهزين + كل مجهز شكد دفع
             await context.bot.send_message(chat_id=owner_id, text=admin_text)           # فاتورة الإدارة (الأرباح) - كما هي
-            await context.bot.send_message(chat_id=owner_id, text=f"📋 نسخة الجروب:\n\n{customer_text}")  # نسخة الجروب
+            if fish_invoice_text:
+                await context.bot.send_message(chat_id=owner_id, text=fish_invoice_text)  # فاتورة السمك لوحد
+            if veg_invoice_text:
+                await context.bot.send_message(chat_id=owner_id, text=veg_invoice_text)  # فاتورة الخضروات والفواكه لوحد
+            if meat_invoice_text:
+                await context.bot.send_message(chat_id=owner_id, text=meat_invoice_text)  # فاتورة اللحم لوحد
+            await context.bot.send_message(chat_id=owner_id, text=f"📋 نسخة الجروب:\n\n{customer_text}", parse_mode="Markdown")  # نسخة الجروب
 
         # تنظيف رسائل المجهز
         if user_id in context.user_data and 'messages_to_delete' in context.user_data[user_id]:
@@ -1474,6 +1828,57 @@ async def confirm_reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"[{update.effective_chat.id}] Error in confirm_reset: {e}", exc_info=True)
         await update.callback_query.message.reply_text("😐، هذا الضراط ماكدرت اصفر.")
         
+def _build_report_fish_text(orders, pricing, invoice_numbers):
+    """بناء نص فواتير السمك (كل الطلبات، منتجات السمك فقط) للتقرير."""
+    lines = ["🐟 **فواتير السمك (تقرير)**\n"]
+    for order_id, order in orders.items():
+        fish_items = [(p_name, pricing.get(order_id, {}).get(p_name, {})) for p_name in order.get("products", []) if is_fish(p_name)]
+        if not fish_items:
+            continue
+        inv = invoice_numbers.get(order_id, "??")
+        lines.append(f"فاتورة #{inv} | {order.get('title', '')} | {order.get('phone_number', '')}")
+        for p_name, p_data in fish_items:
+            buy = p_data.get("buy", 0)
+            who = p_data.get("prepared_by_name", "غير معروف")
+            lines.append(f"  • {p_name}: {format_float(buy)} — جهزه ({who})")
+        lines.append("")
+    return "\n".join(lines) if len(lines) > 1 else "ماكو فواتير سمك مسجلة."
+
+
+def _build_report_veg_text(orders, pricing, invoice_numbers):
+    """بناء نص فواتير الخضروات والفواكه للتقرير."""
+    lines = ["🥬 **فواتير الخضروات والفواكه (تقرير)**\n"]
+    for order_id, order in orders.items():
+        veg_items = [(p_name, pricing.get(order_id, {}).get(p_name, {})) for p_name in order.get("products", []) if is_vegetable_fruit(p_name)]
+        if not veg_items:
+            continue
+        inv = invoice_numbers.get(order_id, "??")
+        lines.append(f"فاتورة #{inv} | {order.get('title', '')} | {order.get('phone_number', '')}")
+        for p_name, p_data in veg_items:
+            buy = p_data.get("buy", 0)
+            who = p_data.get("prepared_by_name", "غير معروف")
+            lines.append(f"  • {p_name}: {format_float(buy)} — جهزه ({who})")
+        lines.append("")
+    return "\n".join(lines) if len(lines) > 1 else "ماكو فواتير خضروات/فواكه مسجلة."
+
+
+def _build_report_meat_text(orders, pricing, invoice_numbers):
+    """بناء نص فواتير اللحم للتقرير."""
+    lines = ["🥩 **فواتير اللحم (تقرير)**\n"]
+    for order_id, order in orders.items():
+        meat_items = [(p_name, pricing.get(order_id, {}).get(p_name, {})) for p_name in order.get("products", []) if is_meat(p_name)]
+        if not meat_items:
+            continue
+        inv = invoice_numbers.get(order_id, "??")
+        lines.append(f"فاتورة #{inv} | {order.get('title', '')} | {order.get('phone_number', '')}")
+        for p_name, p_data in meat_items:
+            buy = p_data.get("buy", 0)
+            who = p_data.get("prepared_by_name", "غير معروف")
+            lines.append(f"  • {p_name}: {format_float(buy)} — جهزه ({who})")
+        lines.append("")
+    return "\n".join(lines) if len(lines) > 1 else "ماكو فواتير لحم مسجلة."
+
+
 async def show_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
     orders = context.application.bot_data['orders']
     pricing = context.application.bot_data['pricing']
@@ -1511,14 +1916,11 @@ async def show_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     if "buy" in p_data and "sell" in p_data:
                         buy = p_data["buy"]
                         sell = p_data["sell"]
-                        # ✅ جلب اسم المجهز الذي جهز هذا المنتج
                         p_worker = p_data.get("prepared_by_name", "غير معروف")
-                        
                         profit_item = sell - buy
                         order_buy += buy
                         order_sell += sell
                         order_net_profit += profit_item 
-                        # ✅ التعديل هنا: إضافة اسم المجهز في سطر المنتج
                         details.append(f"   - {p_name} | 💲:{format_float(profit_item)} (مجهز: {p_worker})")
                     else:
                         details.append(f"   - {p_name} | (لم يتم تسعيره)")
@@ -1533,11 +1935,6 @@ async def show_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             details.append(f"   *إجمالي ربح الطلبية: {format_float(order_net_profit + order_extra_profit)}*")
 
-        top_product_str = "لا يوجد"
-        if product_counter:
-            top_product_name, top_product_count = product_counter.most_common(1)[0]
-            top_product_str = f"{top_product_name} ({top_product_count} مرة)"
-
         result = (
             f"**--- تقرير عام عن الطلبات🗒️ ---**\n"
             f"**إجمالي الطلبات:** {total_orders}\n"
@@ -1546,7 +1943,27 @@ async def show_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"**الربح الكلي الصافي: {format_float(total_net_profit_all_orders + total_extra_profit_all_orders)} دينار**\n\n"
             f"**--- تفاصيل الطلبات🗒 ---**\n" + "\n".join(details)
         )
-        await update.message.reply_text(result, parse_mode="Markdown")
+
+        # بناء فواتير السمك والخضروات واللحم وإرسال كل التقرير للخاص (كل مدير)
+        report_fish = _build_report_fish_text(orders, pricing, invoice_numbers)
+        report_veg = _build_report_veg_text(orders, pricing, invoice_numbers)
+        report_meat = _build_report_meat_text(orders, pricing, invoice_numbers)
+
+        for owner_id in OWNER_IDS:
+            try:
+                # إرسال التقرير العام + فواتير السمك + الخضروات + اللحم للخاص
+                for chunk_start in range(0, len(result), 4096):
+                    await context.bot.send_message(chat_id=owner_id, text=result[chunk_start:chunk_start + 4096], parse_mode="Markdown")
+                for chunk_start in range(0, len(report_fish), 4096):
+                    await context.bot.send_message(chat_id=owner_id, text=report_fish[chunk_start:chunk_start + 4096], parse_mode="Markdown")
+                for chunk_start in range(0, len(report_veg), 4096):
+                    await context.bot.send_message(chat_id=owner_id, text=report_veg[chunk_start:chunk_start + 4096], parse_mode="Markdown")
+                for chunk_start in range(0, len(report_meat), 4096):
+                    await context.bot.send_message(chat_id=owner_id, text=report_meat[chunk_start:chunk_start + 4096], parse_mode="Markdown")
+            except Exception as e:
+                logger.error(f"Error sending report to owner {owner_id}: {e}")
+
+        await update.message.reply_text("✅ تم إرسال التقرير وفواتير السمك والخضروات واللحم للخاص (الإدارة).")
     except Exception as e:
         logger.error(f"Error in show_report: {e}", exc_info=True)
         await update.message.reply_text("😐 صار خطأ بالتقرير.")
@@ -1694,6 +2111,7 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"^(تصفير|صفر|تص|صف)$"), reset_all))
     app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"^صفر$"), reset_supplier_report))
     app.add_handler(CallbackQueryHandler(confirm_reset, pattern="^(confirm_reset|cancel_reset)$"))
+    app.add_handler(CallbackQueryHandler(handle_region_suggestion_callback, pattern=r"^(pick_zone_|reject_region_)"))
 
     # 2. أوامر التقارير (المدير والمجهز)
     app.add_handler(CommandHandler("report", show_report))
@@ -2122,4 +2540,3 @@ async def handle_incomplete_order_selection(update: Update, context: ContextType
     
 if __name__ == "__main__":
     main()
-    
