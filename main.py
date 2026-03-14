@@ -5,9 +5,8 @@ import time
 import asyncio
 import logging
 import threading
-import re
 from collections import Counter
-from datetime import datetime, timezone, timedelta, time as dt_time
+from datetime import datetime, timezone
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, Message
 from telegram.ext import (
@@ -19,7 +18,6 @@ from telegram.ext import (
 from features.delivery_zones import (
     list_zones, get_delivery_price
 )
-from features.product_categories import is_fish, is_vegetable_fruit, is_meat
 
 # ✅ تفعيل الـ logging للحصول على تفاصيل الأخطاء والعمليات
 logging.basicConfig(
@@ -37,7 +35,6 @@ INVOICE_NUMBERS_FILE = os.path.join(DATA_DIR, "invoice_numbers.json")
 DAILY_PROFIT_FILE = os.path.join(DATA_DIR, "daily_profit.json")
 COUNTER_FILE = os.path.join(DATA_DIR, "invoice_counter.txt")
 LAST_BUTTON_MESSAGE_FILE = os.path.join(DATA_DIR, "last_button_message.json")
-KNOWN_GROUPS_FILE = os.path.join(DATA_DIR, "known_groups.json")
 
 # ✅ قراءة التوكن من المتغيرات البيئية (يفترض أنك ضايفه بـ Railway)
 TOKEN = os.getenv("TOKEN")
@@ -49,19 +46,6 @@ invoice_numbers = {}
 daily_profit = 0.0
 last_button_message = {}
 supplier_report_timestamps = {}
-known_group_chats = set()  # معرفات الكروبات لإرسال "تم التصفير التلقائي"
-
-# معرفات كروبات المتجر الإلكتروني و كروب بوت RSTTALABAT
-SITE_SOURCE_CHAT_ID = 2082135888   # الكروب الذي ينزل به بوت الموقع الطلب الأول
-SITE_TARGET_CHAT_ID = 2447525875   # الكروب الذي ينزل به بوت RSTTALABAT الطلب الجاهز
-
-# المنطق مقسوم على ملفين: logic_old (طلبات عادية)، logic_site_order (طلب موقع بداية «اسم الزبون: »)
-import logic_old
-import logic_site_order
-
-# للطلب عبر HTTP: البوت والـ loop يُعيَّنان من thread البوت (post_init)
-_webhook_bot = None
-_webhook_loop = None
 
 # تهيئة القفل لعمليات الحفظ
 save_lock = threading.Lock()
@@ -87,7 +71,7 @@ def load_json_file(filepath, default_value, var_name):
 # دالة حفظ البيانات إلى القرص (يجب أن تكون عامة ويمكن الوصول إليها)
 def _save_data_to_disk_global():
     # الوصول إلى المتغيرات العالمية مباشرةً
-    global orders, pricing, invoice_numbers, daily_profit, last_button_message, supplier_report_timestamps, known_group_chats
+    global orders, pricing, invoice_numbers, daily_profit, last_button_message, supplier_report_timestamps # ✅ ضفنا هنا المتغير الجديد
     with save_lock:
         os.makedirs(DATA_DIR, exist_ok=True)
         try:
@@ -116,10 +100,6 @@ def _save_data_to_disk_global():
                 json.dump(supplier_report_timestamps, f, indent=4)
             os.replace(os.path.join(DATA_DIR, "supplier_report_timestamps.json") + ".tmp", os.path.join(DATA_DIR, "supplier_report_timestamps.json"))
 
-            with open(KNOWN_GROUPS_FILE + ".tmp", "w") as f:
-                json.dump(list(known_group_chats), f)
-            os.replace(KNOWN_GROUPS_FILE + ".tmp", KNOWN_GROUPS_FILE)
-
             logger.info("All data (global) saved to disk successfully.")
         except Exception as e:
             logger.error(f"Error saving global data to disk: {e}")
@@ -141,7 +121,7 @@ def schedule_save_global():
 
 # ✅ دالة تحميل البيانات عند بدء تشغيل البوت (تم تغيير موقعها)
 def load_data():
-    global orders, pricing, invoice_numbers, daily_profit, last_button_message, supplier_report_timestamps, known_group_chats
+    global orders, pricing, invoice_numbers, daily_profit, last_button_message, supplier_report_timestamps # ✅ ضفنا هنا المتغير الجديد
 
     os.makedirs(DATA_DIR, exist_ok=True)
 
@@ -170,11 +150,6 @@ def load_data():
     supplier_report_timestamps_temp = load_json_file(os.path.join(DATA_DIR, "supplier_report_timestamps.json"), {}, "supplier_report_timestamps")
     supplier_report_timestamps.clear()
     supplier_report_timestamps.update({str(k): v for k, v in supplier_report_timestamps_temp.items()})
-
-    known_group_chats.clear()
-    known_list = load_json_file(KNOWN_GROUPS_FILE, [], "known_groups")
-    if isinstance(known_list, list):
-        known_group_chats.update(int(x) for x in known_list if str(x).lstrip("-").isdigit())
 
     logger.info(f"Initial load complete. Orders: {len(orders)}, Pricing entries: {len(pricing)}, Daily Profit: {daily_profit}")
 
@@ -302,26 +277,247 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     markup = ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True, input_field_placeholder='اختر "الطلبات"')
     
     await update.message.reply_text(
-        "أهلاً بك يا أبا الأكبر! لإعداد طلبية، دز الطلبية كلها برسالة واحدة.\n\n*السطر الأول:* عنوان الزبون.\n*السطر الثاني:* رقم هاتف الزبون.\n*الأسطر الباقية:* كل منتج بسطر واحد.", 
+        "أهلاً بك يا أبا الأكبر! لإعداد طلبية، دز الطلبية كلها برسالة واحدة.\n\n*السطر الأول:* عنوان الزبون.\n*السطر الثاني:* رقم هاتف الزبون.\n*الأسطر الباقية:* كل منتج بسطر واحد.\n\nاكتب *اوامر* أو *قائمة* لرؤية قائمة الأوامر والاختصارات.", 
         parse_mode="Markdown",
         reply_markup=markup
     )
     return ConversationHandler.END
 
+
+async def show_commands_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """عرض قائمة الأوامر والاختصارات للمدير والمجهز."""
+    text = (
+        "📋 *قائمة الأوامر والاختصارات*\n"
+        "────────────────────\n\n"
+        "👨🏻‍💼 *للمدير:*\n"
+        "• *تقرير* (أو *تق*) — تقرير عام عن الطلبات والأرباح\n"
+        "• *ارباح* (أو *ار*) — عرض ربح البيع والتجهيز\n"
+        "• *تصفير* (أو *تص* / *صفر* / *صف*) — تصفير كل البيانات (يطلب تأكيد)\n"
+        "• *تقرير الشراء* / *تقارير المجهزين* — تقارير فواتير كل المجهزين\n"
+        "• *مناطق* — عرض مناطق التوصيل والأسعار\n"
+        "• *مسح* — مسح طلبية معينة (برقم الزبون)\n"
+        "• *حذف كل* / *حك* — تنظيف رسائل الكروب\n\n"
+        "👷 *للمجهز:*\n"
+        "• *تقريري* — تقرير الطلبيات اللي جهزتها أنا\n"
+        "• *صفر* (للمجهز) — تصفير تقاريري فقط\n\n"
+        "🔄 *للجميع:*\n"
+        "• *الطلبات* — عرض الطلبات غير المكتملة"
+    )
+    await update.message.reply_text(text, parse_mode="Markdown")
+
+
+async def receive_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    orders = context.application.bot_data['orders']
+    pricing = context.application.bot_data['pricing']
+    invoice_numbers = context.application.bot_data['invoice_numbers']
+    last_button_message = context.application.bot_data['last_button_message']
+
+    print("📩 تم استقبال رسالة جديدة داخل receive_order")
+    try:
+        logger.info(f"[{update.effective_chat.id}] Processing order from: {update.effective_user.id} - Message ID: {update.message.message_id}. User data: {json.dumps(context.user_data.get(str(update.effective_user.id), {}), indent=2)}")
+        await process_order(update, context, update.message)
+        return ConversationHandler.END
+    except Exception as e:
+        logger.error(f"[{update.effective_chat.id}] Error in receive_order: {e}", exc_info=True)
+        await update.message.reply_text("ماكدرت اعالج الطلب عاجبك لوتحاول مره ثانيه لو ادز طلب جديد ولا تصفن.")
+        return ConversationHandler.END
+
 async def edited_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """معالجة تعديل رسالة طلبية — يُحوّل إلى المنطق القديم (logic_old)."""
+    orders = context.application.bot_data['orders']
+    pricing = context.application.bot_data['pricing']
+    invoice_numbers = context.application.bot_data['invoice_numbers']
+    last_button_message = context.application.bot_data['last_button_message']
+
     try:
         if not update.edited_message:
             return
-        logger.info(
-            f"[{update.effective_chat.id}] Processing edited order from: {update.effective_user.id} - "
-            f"Message ID: {update.edited_message.message_id}."
-        )
-        await logic_old.process_order(update, context, update.edited_message, edited=True)
+        logger.info(f"[{update.effective_chat.id}] Processing edited order from: {update.effective_user.id} - Message ID: {update.edited_message.message_id}. User data: {json.dumps(context.user_data.get(str(update.effective_user.id), {}), indent=2)}")
+        await process_order(update, context, update.edited_message, edited=True)
     except Exception as e:
         logger.error(f"[{update.effective_chat.id}] Error in edited_message: {e}", exc_info=True)
         await update.edited_message.reply_text("طك بطك ماكدر اعدل تريد سوي طلب جديد.")
 
+async def process_order(update, context, message, edited=False):
+    orders = context.application.bot_data['orders']
+    pricing = context.application.bot_data['pricing']
+    invoice_numbers = context.application.bot_data['invoice_numbers']
+    last_button_message = context.application.bot_data['last_button_message']
+    
+    user_id = str(message.from_user.id)
+    lines = [line.strip() for line in message.text.strip().split('\n') if line.strip()]
+    
+    # ✅ تعديل التحقق من عدد الأسطر: الآن نتوقع 3 أسطر على الأقل (عنوان، رقم هاتف، منتجات)
+    if len(lines) < 3:
+        if not edited:
+            await message.reply_text("باعلي تاكد انك تكتب الطلبية ك التالي اول سطر هو عنوان الزبون وثاني سطر هو رقم الزبون وراها المنتجات كل سطر بي منتج يالله فر ويلك وسوي الطلب.")
+        return
+
+    title = lines[0]
+    
+    # ✅ منطق جديد لمعالجة رقم الهاتف
+    phone_number_raw = lines[1].strip().replace(" ", "") # إزالة المسافات
+    if phone_number_raw.startswith("+964"):
+        phone_number = "0" + phone_number_raw[4:] # استبدال +964 بـ 0
+    else:
+        phone_number = phone_number_raw.replace("+", "") # إذا ماكو +964، بس نضمن إزالة أي علامة +
+    
+    products = [p.strip() for p in lines[2:] if p.strip()] # ✅ المنتجات تبدأ من السطر الثالث
+
+    if not products:
+        if not edited:
+            await message.reply_text("يابه لازم المنتجات ورا رقم الهاتف .")
+        return
+
+    order_id = None
+    is_new_order = True 
+
+    if edited:
+        for oid, msg_info in last_button_message.items():
+            if msg_info and msg_info.get("message_id") == message.message_id and str(msg_info.get("chat_id")) == str(message.chat_id):
+                if oid in orders: 
+                    order_id = oid
+                    is_new_order = False
+                    logger.info(f"Found existing order {order_id} based on message ID (edited message).")
+                    break
+                else:
+                    logger.warning(f"Message ID {message.message_id} found in last_button_message but order {oid} is missing. Treating as new.")
+                    order_id = None 
+                    
+    if not order_id: 
+        order_id = str(uuid.uuid4())[:8]
+        invoice_no = get_invoice_number() 
+        # ✅ إضافة phone_number و created_at إلى قاموس الطلبية
+        orders[order_id] = {
+            "user_id": user_id, 
+            "title": title, 
+            "phone_number": phone_number, 
+            "products": products, 
+            "places_count": 0,
+            "created_at": datetime.now(timezone.utc).isoformat() # ✅ هذا السطر الجديد
+        } 
+        pricing[order_id] = {p: {} for p in products}
+        invoice_numbers[order_id] = invoice_no
+        logger.info(f"Created new order {order_id} for user {user_id}.")
+    else: 
+        old_products = set(orders[order_id].get("products", []))
+        new_products = set(products)
+        
+        orders[order_id]["title"] = title
+        orders[order_id]["phone_number"] = phone_number # ✅ تحديث رقم الهاتف في الطلبية الموجودة
+        orders[order_id]["products"] = products
+        # اذا تم تعديل الطلبية، ما نغير تاريخ الانشاء
+        
+        for p in new_products:
+            if p not in pricing.get(order_id, {}):
+                pricing.setdefault(order_id, {})[p] = {}
+        
+        if order_id in pricing:
+            for p in old_products - new_products:
+                if p in pricing[order_id]:
+                    del pricing[order_id][p]
+                    logger.info(f"Removed pricing for product '{p}' from order {order_id}.")
+        logger.info(f"Updated existing order {order_id}. Initiator: {user_id}.")
+        
+    context.application.create_task(save_data_in_background(context))
+    
+    # ✅ تعديل رسالة الاستلام لتضمين رقم الهاتف بالشكل الجديد
+    if is_new_order:
+        await message.reply_text(f"طلب : *{title}*\n(الرقم: `{phone_number}` )\n(عدد المنتجات: {len(products)})", parse_mode="Markdown")
+        await show_buttons(message.chat_id, context, user_id, order_id)
+    else:
+        await show_buttons(message.chat_id, context, user_id, order_id, confirmation_message="دهاك حدثنه الطلب. عيني دخل الاسعار الاستاذ حدث الطلب.")
+
+async def show_buttons(chat_id, context, user_id, order_id, confirmation_message=None):
+    orders = context.application.bot_data['orders']
+    pricing = context.application.bot_data['pricing']
+    last_button_message = context.application.bot_data['last_button_message']
+
+    try:
+        if order_id not in orders:
+            await context.bot.send_message(chat_id=chat_id, text="❌ الطلب غير موجود.")
+            return
+
+        order = orders[order_id]
+        final_buttons_list = []
+
+        # أزرار الإضافة والمسح (السطر الأول)
+        final_buttons_list.append([
+            InlineKeyboardButton("➕ إضافة منتج", callback_data=f"add_product_to_order_{order_id}"),
+            InlineKeyboardButton("🗑️ مسح منتج", callback_data=f"delete_specific_product_{order_id}")
+        ])
+
+        completed_products_buttons = []
+        pending_products_buttons = []
+
+        # جلب قائمة المنتجات المعدلة حالياً من بيانات المستخدم
+        user_data = context.user_data.get(user_id, {})
+        edited_list = user_data.get("edited_products_list", [])
+        editing_mode = user_data.get("editing_mode", False)
+
+        for i, p_name in enumerate(order["products"]):
+            callback_data_for_product = f"{order_id}|{i}"
+            
+            # تحديد شكل الزر (تم التسعير، معدل، أو جديد)
+            is_priced = p_name in pricing.get(order_id, {}) and 'buy' in pricing[order_id].get(p_name, {})
+
+            if is_priced:
+                if p_name in edited_list:
+                    button_text = f"✏️✅ {p_name}"  # علامة القلم للمعدل
+                else:
+                    button_text = f"✅ {p_name}"    # علامة صح للمسعر مسبقاً
+                completed_products_buttons.append([InlineKeyboardButton(button_text, callback_data=callback_data_for_product)])
+            else:
+                button_text = p_name
+                pending_products_buttons.append([InlineKeyboardButton(button_text, callback_data=callback_data_for_product)])
+
+        # دمج القوائم
+        final_buttons_list.extend(completed_products_buttons)
+        final_buttons_list.extend(pending_products_buttons)
+
+        # ✅ أزرار التحكم في وضع التعديل (تظهر فقط عند النقر على "تعديل الطلبية")
+        if editing_mode:
+            final_buttons_list.append([
+                InlineKeyboardButton("🏪 تعديل المحلات", callback_data=f"done_editing_{order_id}")
+            ])
+            final_buttons_list.append([
+                InlineKeyboardButton("💾 حفظ واكتمل التعديل", callback_data=f"cancel_edit_{order_id}")
+            ])
+
+        markup = InlineKeyboardMarkup(final_buttons_list)
+
+        # تجهيز نص الرسالة
+        message_text = f"{confirmation_message}\n\n" if confirmation_message else ""
+        status_text = "🔧 وضع التعديل حالياً" if editing_mode else "📝 تسعير الطلب"
+        message_text += f"*{status_text}* ({order['title']}):\nاختر منتجاً لتعديل سعره:"
+
+        # حذف الرسالة السابقة لتجنب تراكم الرسائل
+        msg_info = last_button_message.get(order_id)
+        if msg_info:
+            context.application.create_task(delete_message_in_background(context, chat_id=msg_info["chat_id"], message_id=msg_info["message_id"]))
+
+        # إرسال الرسالة الجديدة
+        msg = await context.bot.send_message(
+            chat_id=chat_id, 
+            text=message_text, 
+            reply_markup=markup, 
+            parse_mode="Markdown"
+        )
+        
+        # حفظ معلومات الرسالة الأخيرة
+        last_button_message[order_id] = {"chat_id": chat_id, "message_id": msg.message_id}
+        context.application.create_task(save_data_in_background(context)) 
+
+        # تنظيف أي رسائل مؤقتة أخرى
+        if 'messages_to_delete' in user_data:
+            for m_info in user_data['messages_to_delete']:
+                context.application.create_task(delete_message_in_background(context, chat_id=m_info['chat_id'], message_id=m_info['message_id']))
+            user_data['messages_to_delete'].clear()
+            
+    except Exception as e:
+        logger.error(f"Error in show_buttons: {e}", exc_info=True)
+        await context.bot.send_message(chat_id=chat_id, text="⚠️ حدث خطأ في عرض قائمة المنتجات.")
+
+        
 async def product_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     orders = context.application.bot_data['orders']
     pricing = context.application.bot_data['pricing']
@@ -529,7 +725,7 @@ async def confirm_delete_product_by_button_callback(update: Update, context: Con
         await context.bot.send_message(chat_id=chat_id, text=f"ترا المنتج مو موجود بالطلبية أصلاً (يمكن انمسح). تأكد من الاسم.")
 
     # نرجع نعرض الأزرار المحدثة
-    await logic_old.show_buttons(chat_id, context, user_id, order_id) 
+    await show_buttons(chat_id, context, user_id, order_id) 
     return ConversationHandler.END
 
 async def cancel_add_product_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -548,7 +744,7 @@ async def cancel_add_product_callback(update: Update, context: ContextTypes.DEFA
 
     await context.bot.send_message(chat_id=chat_id, text="تم إلغاء عملية إضافة منتج جديد.")
     # نرجع نعرض الأزرار الأصلية
-    await logic_old.show_buttons(chat_id, context, user_id, order_id)
+    await show_buttons(chat_id, context, user_id, order_id)
     return ConversationHandler.END
 
 async def cancel_delete_product_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -567,7 +763,7 @@ async def cancel_delete_product_callback(update: Update, context: ContextTypes.D
 
     await context.bot.send_message(chat_id=chat_id, text="تم إلغاء عملية مسح المنتج.")
     # نرجع نعرض الأزرار الأصلية
-    await logic_old.show_buttons(chat_id, context, user_id, order_id)
+    await show_buttons(chat_id, context, user_id, order_id)
     return ConversationHandler.END
 
 async def receive_buy_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -652,7 +848,7 @@ async def receive_buy_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if is_order_complete and not is_editing:
             await request_places_count_standalone(chat_id, context, user_id, order_id)
         else:
-            await logic_old.show_buttons(chat_id, context, user_id, order_id, 
+            await show_buttons(chat_id, context, user_id, order_id, 
                              confirmation_message=f"✅ تم حفظ {product}: شراء {format_float(buy_price)} / بيع {format_float(sell_price)}")
         
         return ConversationHandler.END
@@ -710,7 +906,7 @@ async def receive_new_product_name(update: Update, context: ContextTypes.DEFAULT
     context.user_data[user_id].pop("current_active_order_id", None)
 
     # عرض الأزرار المحدثة (التي تعتمد على الـ index لمنع أخطاء طول البيانات)
-    await logic_old.show_buttons(chat_id, context, user_id, order_id)
+    await show_buttons(chat_id, context, user_id, order_id)
     return ConversationHandler.END
 
 async def request_places_count_standalone(chat_id, context: ContextTypes.DEFAULT_TYPE, user_id: str, order_id: str):
@@ -964,72 +1160,6 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
             admin_detailed_lines.append(f"  • {sup_name}: {format_float(amt)} دينار 💸")
         admin_detailed_text = "\n".join(admin_detailed_lines)
 
-        # --- فاتورة السمك لوحد (بالخاص): كل منتج سمك بسطر كامل + من جهزه ---
-        fish_lines = []
-        for p_name in order["products"]:
-            if not is_fish(p_name):
-                continue
-            data = pricing.get(order_id, {}).get(p_name, {})
-            buy = float(data.get("buy", 0.0))
-            p_worker_name = data.get("prepared_by_name", "شخص آخر")
-            fish_lines.append(f"  • {p_name}: {format_float(buy)} — جهزه ({p_worker_name})")
-        if fish_lines:
-            fish_invoice_text = (
-                "🐟 فاتورة السمك (تفصيل):🧾\n"
-                f"رقم الفاتورة🔢: {invoice}\n"
-                f"عنوان الزبون🏠: {order['title']}\n"
-                f"رقم الزبون📞: {phone_number}\n\n"
-                "تفاصيل السمك:\n"
-                + "\n".join(fish_lines) +
-                f"\n\n💰 مجموع السمك: {format_float(sum(float(pricing.get(order_id, {}).get(p, {}).get('buy', 0)) for p in order['products'] if is_fish(p)))}"
-            )
-        else:
-            fish_invoice_text = None
-
-        # --- فاتورة الخضروات والفواكه لوحد (بالخاص) ---
-        veg_lines = []
-        for p_name in order["products"]:
-            if not is_vegetable_fruit(p_name):
-                continue
-            data = pricing.get(order_id, {}).get(p_name, {})
-            buy = float(data.get("buy", 0.0))
-            p_worker_name = data.get("prepared_by_name", "شخص آخر")
-            veg_lines.append(f"  • {p_name}: {format_float(buy)} — جهزه ({p_worker_name})")
-        if veg_lines:
-            veg_invoice_text = (
-                "🥬 فاتورة الخضروات والفواكه:🧾\n"
-                f"رقم الفاتورة🔢: {invoice}\n"
-                f"عنوان الزبون🏠: {order['title']}\n"
-                f"رقم الزبون📞: {phone_number}\n\n"
-                "تفاصيل الخضروات/الفواكه:\n"
-                + "\n".join(veg_lines) +
-                f"\n\n💰 مجموع الخضروات/الفواكه: {format_float(sum(float(pricing.get(order_id, {}).get(p, {}).get('buy', 0)) for p in order['products'] if is_vegetable_fruit(p)))}"
-            )
-        else:
-            veg_invoice_text = None
-
-        # --- فاتورة اللحم لوحد (بالخاص) ---
-        meat_lines = []
-        for p_name in order["products"]:
-            if not is_meat(p_name):
-                continue
-            data = pricing.get(order_id, {}).get(p_name, {})
-            buy = float(data.get("buy", 0.0))
-            p_worker_name = data.get("prepared_by_name", "شخص آخر")
-            meat_lines.append(f"  • {p_name}: {format_float(buy)} — جهزه ({p_worker_name})")
-        if meat_lines:
-            meat_invoice_text = (
-                "🥩 فاتورة اللحم (تفصيل):🧾\n"
-                f"رقم الفاتورة🔢: {invoice}\n"
-                f"عنوان الزبون🏠: {order['title']}\n"
-                f"رقم الزبون📞: {phone_number}\n\n"
-                "تفاصيل اللحم:\n"
-                + "\n".join(meat_lines) +
-                f"\n\n💰 مجموع اللحم: {format_float(sum(float(pricing.get(order_id, {}).get(p, {}).get('buy', 0)) for p in order['products'] if is_meat(p)))}"
-            )
-        else:
-            meat_invoice_text = None
-
         # --- ب. بناء فاتورة الإدارة (للمدير فقط) ---
         admin_msg = [
             f"فاتورة الإدارة:👨🏻‍💼",
@@ -1091,16 +1221,10 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
         # 2. إرسال للجروب (فاتورة الزبون)
         await context.bot.send_message(chat_id=chat_id, text=customer_text)
 
-        # 3. إرسال لكل المديرين بالخاص: التفصيلية، الأرباح، فاتورة السمك لوحد، فاتورة الخضروات لوحد، نسخة الجروب
+        # 3. إرسال لكل المديرين: أولاً التفصيلية ثم فاتورة الأرباح ثم نسخة الجروب
         for owner_id in OWNER_IDS:
             await context.bot.send_message(chat_id=owner_id, text=admin_detailed_text)  # تفاصيل المجهزين + كل مجهز شكد دفع
             await context.bot.send_message(chat_id=owner_id, text=admin_text)           # فاتورة الإدارة (الأرباح) - كما هي
-            if fish_invoice_text:
-                await context.bot.send_message(chat_id=owner_id, text=fish_invoice_text)  # فاتورة السمك لوحد
-            if veg_invoice_text:
-                await context.bot.send_message(chat_id=owner_id, text=veg_invoice_text)  # فاتورة الخضروات والفواكه لوحد
-            if meat_invoice_text:
-                await context.bot.send_message(chat_id=owner_id, text=meat_invoice_text)  # فاتورة اللحم لوحد
             await context.bot.send_message(chat_id=owner_id, text=f"📋 نسخة الجروب:\n\n{customer_text}")  # نسخة الجروب
 
         # تنظيف رسائل المجهز
@@ -1156,7 +1280,7 @@ async def edit_prices(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except Exception:
                 pass
         
-        await logic_old.show_buttons(query.message.chat_id, context, user_id, order_id, confirmation_message="وضع التعديل: اضغط على المنتج لتغيير سعره، ثم اضغط 'اكتمل التعديل'.")
+        await show_buttons(query.message.chat_id, context, user_id, order_id, confirmation_message="وضع التعديل: اضغط على المنتج لتغيير سعره، ثم اضغط 'اكتمل التعديل'.")
         return ConversationHandler.END
     except Exception as e:
         logger.error(f"Error in edit_prices: {e}", exc_info=True)
@@ -1542,398 +1666,11 @@ async def clear_chat_messages(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     # إرسال تأكيد نهائي
     await context.bot.send_message(chat_id=chat_id, text=f"تم تنظيف الجات بنجاح! ✨\nتم مسح {deleted_count} رسالة.")
-
-
-async def store_group_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """حفظ معرف الكروب عند أي رسالة من كروب (لإرسال التصفير التلقائي لاحقاً)."""
-    global known_group_chats
-    if update.effective_chat and update.effective_chat.id:
-        chat_type = getattr(update.effective_chat, "type", None)
-        if chat_type in ("group", "supergroup"):
-            known_group_chats.add(update.effective_chat.id)
-            schedule_save_global()
-
-
-def _build_report_orders_text(orders, pricing, invoice_numbers):
-    """بناء نص تقرير الطلبات (فواتير الطلبات)."""
-    from collections import Counter
-    total_orders = len(orders)
-    total_net_profit_all_orders = 0.0
-    total_extra_profit_all_orders = 0.0
-    details = []
-    for order_id, order in orders.items():
-        invoice = invoice_numbers.get(order_id, "غير معروف")
-        details.append(f"\n**فاتورة رقم:🔢** {invoice}")
-        details.append(f"**عنوان الزبون:🏠** {order['title']}")
-        order_net_profit = 0.0
-        if isinstance(order.get("products"), list):
-            for p_name in order["products"]:
-                p_data = pricing.get(order_id, {}).get(p_name, {})
-                if "buy" in p_data and "sell" in p_data:
-                    buy, sell = p_data["buy"], p_data["sell"]
-                    p_worker = p_data.get("prepared_by_name", "غير معروف")
-                    profit_item = sell - buy
-                    order_net_profit += profit_item
-                    details.append(f"   - {p_name} | 💲:{format_float(profit_item)} (مجهز: {p_worker})")
-                else:
-                    details.append(f"   - {p_name} | (لم يتم تسعيره)")
-        num_places = order.get("places_count", 0)
-        order_extra = calculate_extra(num_places)
-        total_net_profit_all_orders += order_net_profit
-        total_extra_profit_all_orders += order_extra
-        details.append(f"   *إجمالي ربح الطلبية: {format_float(order_net_profit + order_extra)}*")
-    header = (
-        f"**--- فواتير الطلبات 🗒️ ---**\n"
-        f"**إجمالي الطلبات:** {total_orders}\n"
-        f"**الربح الكلي الصافي: {format_float(total_net_profit_all_orders + total_extra_profit_all_orders)} دينار**\n\n"
-        f"**--- تفاصيل الطلبات ---**\n" + "\n".join(details)
-    )
-    return header
-
-
-def _build_report_profit_only_text(orders, pricing):
-    """بناء نص الأرباح لوحد."""
-    total_net = 0.0
-    total_extra = 0.0
-    for order_id, order_data in orders.items():
-        if isinstance(order_data.get("products"), list):
-            for p_name in order_data["products"]:
-                if order_id in pricing and p_name in pricing[order_id] and "buy" in pricing[order_id][p_name] and "sell" in pricing[order_id][p_name]:
-                    total_net += pricing[order_id][p_name]["sell"] - pricing[order_id][p_name]["buy"]
-        total_extra += calculate_extra(order_data.get("places_count", 0))
-    return f"ربح البيع والتجهيز💵: *{format_float(total_net + total_extra)}* دينار"
-
-
-def _build_report_fish_text(orders, pricing, invoice_numbers):
-    """بناء نص فواتير السمك (كل الطلبات، منتجات السمك فقط)."""
-    lines = ["🐟 **فواتير السمك (تقرير يومي)**\n"]
-    for order_id, order in orders.items():
-        fish_items = [(p_name, pricing.get(order_id, {}).get(p_name, {})) for p_name in order.get("products", []) if is_fish(p_name)]
-        if not fish_items:
-            continue
-        inv = invoice_numbers.get(order_id, "??")
-        lines.append(f"فاتورة #{inv} | {order.get('title', '')} | {order.get('phone_number', '')}")
-        for p_name, p_data in fish_items:
-            buy = p_data.get("buy", 0)
-            who = p_data.get("prepared_by_name", "غير معروف")
-            lines.append(f"  • {p_name}: {format_float(buy)} — جهزه ({who})")
-        lines.append("")
-    return "\n".join(lines) if len(lines) > 1 else "ماكو فواتير سمك لهذا اليوم."
-
-
-def _build_report_veg_text(orders, pricing, invoice_numbers):
-    """بناء نص فواتير الخضروات والفواكه."""
-    lines = ["🥬 **فواتير الخضروات والفواكه (تقرير يومي)**\n"]
-    for order_id, order in orders.items():
-        veg_items = [(p_name, pricing.get(order_id, {}).get(p_name, {})) for p_name in order.get("products", []) if is_vegetable_fruit(p_name)]
-        if not veg_items:
-            continue
-        inv = invoice_numbers.get(order_id, "??")
-        lines.append(f"فاتورة #{inv} | {order.get('title', '')} | {order.get('phone_number', '')}")
-        for p_name, p_data in veg_items:
-            buy = p_data.get("buy", 0)
-            who = p_data.get("prepared_by_name", "غير معروف")
-            lines.append(f"  • {p_name}: {format_float(buy)} — جهزه ({who})")
-        lines.append("")
-    return "\n".join(lines) if len(lines) > 1 else "ماكو فواتير خضروات/فواكه لهذا اليوم."
-
-
-def _build_report_meat_text(orders, pricing, invoice_numbers):
-    """بناء نص فواتير اللحم (تقرير يومي)."""
-    lines = ["🥩 **فواتير اللحم (تقرير يومي)**\n"]
-    for order_id, order in orders.items():
-        meat_items = [(p_name, pricing.get(order_id, {}).get(p_name, {})) for p_name in order.get("products", []) if is_meat(p_name)]
-        if not meat_items:
-            continue
-        inv = invoice_numbers.get(order_id, "??")
-        lines.append(f"فاتورة #{inv} | {order.get('title', '')} | {order.get('phone_number', '')}")
-        for p_name, p_data in meat_items:
-            buy = p_data.get("buy", 0)
-            who = p_data.get("prepared_by_name", "غير معروف")
-            lines.append(f"  • {p_name}: {format_float(buy)} — جهزه ({who})")
-        lines.append("")
-    return "\n".join(lines) if len(lines) > 1 else "ماكو فواتير لحم لهذا اليوم."
-
-
-async def _build_supplier_reports_messages(bot, orders, pricing, invoice_numbers):
-    """بناء قائمة رسائل تقارير المجهزين (كل مجهز رسالة)."""
-    all_suppliers = set()
-    for oid in pricing:
-        for p_name in pricing.get(oid, {}):
-            s_id = pricing[oid][p_name].get("prepared_by_id")
-            if s_id:
-                all_suppliers.add(s_id)
-    messages = []
-    for s_id in all_suppliers:
-        supplier_name = "مجهز غير معروف"
-        try:
-            supplier_chat = await bot.get_chat(int(s_id))
-            supplier_name = supplier_chat.first_name
-        except Exception:
-            pass
-        report_msg = f"📦 <b>فواتير مجهز: {supplier_name}</b>\n🆔 <code>{s_id}</code>\n-----------------------------------\n"
-        grand_total = 0.0
-        has_data = False
-        for oid, order_data in orders.items():
-            invoice_no = invoice_numbers.get(oid, '??')
-            order_total_buy = 0.0
-            others_deduction = 0.0
-            others_details = {}
-            items_text = ""
-            order_has_supplier = False
-            for p_name in order_data.get('products', []):
-                p_info = pricing.get(oid, {}).get(p_name, {})
-                buy_price = p_info.get('buy', 0.0)
-                p_worker_id = str(p_info.get('prepared_by_id', ''))
-                p_worker_name = p_info.get('prepared_by_name', 'شخص آخر')
-                if buy_price > 0:
-                    order_total_buy += buy_price
-                    if p_worker_id == str(s_id):
-                        items_text += f"   • {p_name}: {format_float(buy_price)}\n"
-                        order_has_supplier = True
-                    else:
-                        items_text += f"   • {p_name}: {format_float(buy_price)} جهزه ({p_worker_name})\n"
-                        others_deduction += buy_price
-                        others_details[p_worker_name] = others_details.get(p_worker_name, 0.0) + buy_price
-            if order_has_supplier:
-                has_data = True
-                report_msg += f"🧾 #{invoice_no} | {order_data['title']}\n" + items_text + f"💰 مجموع الطلبية: {format_float(order_total_buy)}\n"
-                final_net = order_total_buy - others_deduction
-                grand_total += final_net
-                report_msg += "--- --- ---\n"
-        if has_data:
-            report_msg += f"\n✅ <b>المجموع الكلي للمجهز:</b> {format_float(grand_total)} دينار 💸"
-            messages.append(report_msg)
-    return messages
-
-
-def _build_report_sales_purchase_profit_text(orders, pricing, invoice_numbers):
-    """فواتير البيع والشراء والارباح (ملخص إداري)."""
-    lines = ["**--- فواتير البيع والشراء والأرباح 👨🏻‍💼 ---**\n"]
-    for order_id, order in orders.items():
-        inv = invoice_numbers.get(order_id, "??")
-        total_buy = 0.0
-        total_sell = 0.0
-        for p_name in order.get("products", []):
-            p_data = pricing.get(order_id, {}).get(p_name, {})
-            total_buy += float(p_data.get("buy", 0))
-            total_sell += float(p_data.get("sell", 0))
-        places = order.get("places_count", 0)
-        extra = calculate_extra(places)
-        delivery = float(get_delivery_price(order.get('title', '')))
-        profit = total_sell - total_buy
-        lines.append(f"فاتورة #{inv} | شراء: {format_float(total_buy)} | بيع: {format_float(total_sell)} | ربح: {format_float(profit)} | محلات: {format_float(extra)} | توصيل: {format_float(delivery)}")
-    return "\n".join(lines) if len(lines) > 1 else "ماكو طلبات."
-
-
-async def send_daily_report_callback(context: ContextTypes.DEFAULT_TYPE):
-    """تقرير يومي الساعة 4 الفجر (1:00 UTC = 4 ص العراق)."""
-    bot = context.bot
-    orders = context.application.bot_data.get('orders', {})
-    pricing = context.application.bot_data.get('pricing', {})
-    invoice_numbers = context.application.bot_data.get('invoice_numbers', {})
-    if not orders:
-        for oid in OWNER_IDS:
-            try:
-                await bot.send_message(chat_id=oid, text="📋 التقرير اليومي (4 الفجر)\n\nماكو طلبات مسجلة لهذا اليوم.")
-            except Exception as e:
-                logger.error(f"Daily report send to {oid}: {e}")
-        return
-    try:
-        report_orders = _build_report_orders_text(orders, pricing, invoice_numbers)
-        report_fish = _build_report_fish_text(orders, pricing, invoice_numbers)
-        report_veg = _build_report_veg_text(orders, pricing, invoice_numbers)
-        report_meat = _build_report_meat_text(orders, pricing, invoice_numbers)
-        report_sales = _build_report_sales_purchase_profit_text(orders, pricing, invoice_numbers)
-        report_profit = _build_report_profit_only_text(orders, pricing)
-        supplier_msgs = await _build_supplier_reports_messages(bot, orders, pricing, invoice_numbers)
-        for owner_id in OWNER_IDS:
-            try:
-                await bot.send_message(owner_id, text="📋 التقرير اليومي (4 الفجر)\n-----------------------------------")
-                for i in range(0, len(report_orders), 4096):
-                    await bot.send_message(owner_id, text=report_orders[i:i+4096], parse_mode="Markdown")
-                for msg in supplier_msgs:
-                    for i in range(0, len(msg), 4096):
-                        await bot.send_message(owner_id, text=msg[i:i+4096], parse_mode="HTML")
-                for i in range(0, len(report_fish), 4096):
-                    await bot.send_message(owner_id, text=report_fish[i:i+4096], parse_mode="Markdown")
-                for i in range(0, len(report_veg), 4096):
-                    await bot.send_message(owner_id, text=report_veg[i:i+4096], parse_mode="Markdown")
-                for i in range(0, len(report_meat), 4096):
-                    await bot.send_message(owner_id, text=report_meat[i:i+4096], parse_mode="Markdown")
-                for i in range(0, len(report_sales), 4096):
-                    await bot.send_message(owner_id, text=report_sales[i:i+4096], parse_mode="Markdown")
-                await bot.send_message(owner_id, text=report_profit, parse_mode="Markdown")
-            except Exception as e:
-                logger.error(f"Daily report to owner {owner_id}: {e}")
-    except Exception as e:
-        logger.error(f"Daily report callback error: {e}", exc_info=True)
-
-
-def _do_auto_reset(context):
-    """تنفيذ التصفير التلقائي (بدون تأكيد مستخدم)."""
-    global orders, pricing, invoice_numbers, last_button_message, supplier_report_timestamps
-    orders = context.application.bot_data['orders']
-    pricing = context.application.bot_data['pricing']
-    invoice_numbers = context.application.bot_data['invoice_numbers']
-    last_button_message = context.application.bot_data['last_button_message']
-    supplier_report_timestamps = context.application.bot_data['supplier_report_timestamps']
-    orders.clear()
-    pricing.clear()
-    invoice_numbers.clear()
-    last_button_message.clear()
-    supplier_report_timestamps.clear()
-    context.application.bot_data['daily_profit'] = 0.0
-    try:
-        with open(COUNTER_FILE, "w") as f:
-            f.write("1")
-    except Exception as e:
-        logger.error(f"Reset counter file: {e}")
-    _save_data_to_disk_global()
-
-
-async def auto_reset_broadcast_callback(context: ContextTypes.DEFAULT_TYPE):
-    """ساعة 6 الصبح: تصفير تلقائي ثم إرسال 'تم التصفير التلقائي' لكل الكروبات وكل الخاص."""
-    _do_auto_reset(context)
-    bot = context.bot
-    msg = "✅ تم التصفير التلقائي (6 الصبح)."
-    for chat_id in known_group_chats:
-        try:
-            await bot.send_message(chat_id=chat_id, text=msg)
-        except Exception as e:
-            logger.warning(f"Broadcast to group {chat_id}: {e}")
-    for owner_id in OWNER_IDS:
-        try:
-            await bot.send_message(chat_id=owner_id, text=msg)
-        except Exception as e:
-            logger.warning(f"Broadcast to owner {owner_id}: {e}")
-    logger.info("Auto reset and broadcast completed.")
-
-
-async def _route_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    الملف الأساسي يقرأ الرسالة فقط ويحوّلها:
-    - إذا بداية الرسالة «اسم الزبون» → الملف الجديد (logic_site_order).
-    - وإلا → الملف القديم (logic_old).
-    """
-    if not update.message or not update.message.text:
-        return
-    text = (update.message.text or "").strip()
-    chat_id = update.effective_chat.id
-    is_site = logic_site_order.is_site_order_message(text)
-
-    if chat_id == SITE_SOURCE_CHAT_ID:
-        if is_site:
-            await logic_site_order.handle_site_source(update, context)
-        else:
-            await logic_old.receive_order(update, context)
-        return
-
-    if chat_id == SITE_TARGET_CHAT_ID:
-        if is_site or logic_site_order.pending_site_orders:
-            await logic_site_order.handle_site_target(update, context)
-        else:
-            await logic_old.receive_order(update, context)
-        return
-
-    # أي كروب ثاني: إذا فيه طلبية معلّقة (منتظر رقم أو منطقة) نمرر للملف الجديد؛ وإلا حسب بداية الرسالة
-    if logic_site_order.pending_site_orders or is_site:
-        await logic_site_order.handle_site_target(update, context)
-    else:
-        await logic_old.receive_order(update, context)
-
-
-def _run_order_webhook_server(port: int):
-    """تشغيل خادم HTTP لاستقبال الطلبات من الموقع (يتخطى مشكلة عدم استلام رسائل البوتات من بوتات أخرى)."""
-    from flask import Flask, request, jsonify
-    global _webhook_bot, _webhook_loop
-
-    app_http = Flask(__name__)
-
-    @app_http.route("/incoming-order", methods=["POST"])
-    def incoming_order():
-        global _webhook_bot, _webhook_loop
-        if _webhook_bot is None or _webhook_loop is None:
-            return jsonify({"ok": False, "error": "bot_not_ready"}), 503
-        try:
-            data = request.get_json(force=True, silent=True) or {}
-            customer_name = data.get("customer_name", "")
-            address = data.get("address", "")
-            landmark = data.get("landmark", "")
-            items_raw = data.get("items", [])
-            phone = data.get("phone") or data.get("phone_number")
-            if isinstance(phone, str):
-                phone = logic_site_order.extract_phone_number(phone) or phone.strip() or None
-            items = []
-            for it in items_raw:
-                if isinstance(it, dict):
-                    name = (it.get("name") or "").strip()
-                    if re.match(r"^اسم\s*المحل\s*[:\：]\s*", name):
-                        name = re.sub(r"^اسم\s*المحل\s*[:\：]\s*", "", name).strip()
-                    elif re.match(r"^اسم\s*المحل\s+", name):
-                        name = re.sub(r"^اسم\s*المحل\s+", "", name).strip()
-                    if name and name != "اسم المحل":
-                        items.append({"name": name, "qty": int(it.get("qty", 1)) if isinstance(it.get("qty"), (int, float)) else 1})
-                elif isinstance(it, str) and it.strip():
-                    items.append({"name": it.strip(), "qty": 1})
-            order_data = {
-                "customer_name": customer_name,
-                "address": address,
-                "landmark": landmark,
-                "items": items,
-                "total_price": None,
-            }
-            if not items:
-                return jsonify({"ok": False, "error": "no_items"}), 400
-            if phone:
-                rst_text = logic_site_order.build_rst_order_text_from_site(order_data, phone)
-                future = asyncio.run_coroutine_threadsafe(
-                    _webhook_bot.send_message(chat_id=SITE_TARGET_CHAT_ID, text=rst_text),
-                    _webhook_loop,
-                )
-                future.result(timeout=15)
-                return jsonify({"ok": True, "sent_to_chat": SITE_TARGET_CHAT_ID})
-            logic_site_order.pending_site_orders.append({
-                "order_data": order_data,
-                "needs_region": False,
-                "needs_phone": True,
-            })
-            notify_text = (
-                "📦 اجت طلبية جديدة من المتجر الإلكتروني.\n"
-                f"العنوان/النقطة الدالة: {landmark or address or 'غير معروف'}\n"
-                "بس الطلب ما بي رقم زبون.\n"
-                "دزوا رقم الموبايل فقط حتى أكمل الطلبية."
-            )
-            future = asyncio.run_coroutine_threadsafe(
-                _webhook_bot.send_message(chat_id=SITE_TARGET_CHAT_ID, text=notify_text),
-                _webhook_loop,
-            )
-            future.result(timeout=15)
-            return jsonify({"ok": True, "pending_phone": True})
-        except Exception as e:
-            logger.exception("incoming_order HTTP error")
-            return jsonify({"ok": False, "error": str(e)}), 500
-
-    @app_http.route("/health", methods=["GET"])
-    def health():
-        return jsonify({"ok": True, "bot_ready": _webhook_bot is not None})
-
-    app_http.run(host="0.0.0.0", port=port, debug=False, use_reloader=False, threaded=True)
-
-
+    
+        
+        
 def main():
-    global _webhook_bot, _webhook_loop
-
-    async def _store_bot_and_loop(application):
-        global _webhook_bot, _webhook_loop
-        _webhook_bot = application.bot
-        try:
-            _webhook_loop = asyncio.get_running_loop()
-        except RuntimeError:
-            _webhook_loop = asyncio.get_event_loop()
-        logger.info("Order webhook: bot and loop stored for HTTP /incoming-order")
-
-    app = ApplicationBuilder().token(TOKEN).post_init(_store_bot_and_loop).build()
+    app = ApplicationBuilder().token(TOKEN).build()
 
     # تهيئة البيانات في Bot Data
     app.bot_data['orders'] = orders
@@ -1944,20 +1681,15 @@ def main():
     app.bot_data['supplier_report_timestamps'] = supplier_report_timestamps
     app.bot_data['schedule_save_global_func'] = schedule_save_global
     app.bot_data['_save_data_to_disk_global_func'] = _save_data_to_disk_global
-    app.bot_data['pending_site_orders'] = logic_site_order.pending_site_orders
-    app.bot_data['get_invoice_number'] = get_invoice_number
-    app.bot_data['save_data_in_background'] = save_data_in_background
-    app.bot_data['delete_message_in_background'] = delete_message_in_background
 
-    # 0. الملف الأساسي: يقرأ الرسالة فقط ويحوّلها — أول handler يلتقط كل النص (أي كروب)
-    app.add_handler(
-        MessageHandler(filters.TEXT & ~filters.COMMAND, _route_message)
-    )
+    # 0. قائمة الأوامر (اوامر / قائمة / مساعدة)
+    app.add_handler(CommandHandler("help", show_commands_list))
+    app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"^(اوامر|الاوامر|الأوامر|قائمة|القائمة|مساعدة|المساعدة)$"), show_commands_list))
 
     # 1. أوامر التحكم الأساسية
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("profit", show_profit))
-    app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"^(الارباح|ارباح)$"), show_profit))
+    app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"^(الارباح|ارباح|ار)$"), show_profit))
     app.add_handler(CommandHandler("reset", reset_all))
     app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"^(تصفير|صفر|تص|صف)$"), reset_all))
     app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"^صفر$"), reset_supplier_report))
@@ -1965,13 +1697,13 @@ def main():
 
     # 2. أوامر التقارير (المدير والمجهز)
     app.add_handler(CommandHandler("report", show_report))
-    app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"^(التقارير|تقرير|تقارير)$"), show_report))
+    app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"^(التقارير|تقرير|تقارير|تق)$"), show_report))
     app.add_handler(CommandHandler("myreport", show_supplier_report))
     app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"^(تقاريري|تقريري)$"), show_supplier_report))
     
     # 3. تقارير الشراء (المجهزين) - دعم كل الكلمات
     app.add_handler(CommandHandler("purchase_reports", show_all_purchase_reports))
-    app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"^(تقرير الشراء|تقرير شراء|تقارير شراء|تقارير الشراء|تقارير المجهزين|تقرير المجهزين|تق|تقرير مجهزين|تقارير مجهزين)$"), show_all_purchase_reports))
+    app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"^(تقرير الشراء|تقرير شراء|تقارير شراء|تقارير الشراء|تقارير المجهزين|تقرير المجهزين|تقرير مجهزين|تقارير مجهزين)$"), show_all_purchase_reports))
 
     # 4. أوامر التنظيف (مسح الكل)
     app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"^(ح ك|حك|حذف ك|حذف كل|حذف الكل|م ك|مك|م س|مسح كل|مسح الكل)$"), clear_chat_messages))
@@ -1991,18 +1723,6 @@ def main():
 
     # 7. معالجة الرسائل المعدلة
     app.add_handler(MessageHandler(filters.UpdateType.EDITED_MESSAGE, edited_message))
-
-    # 7ب. تسجيل الكروبات (لإرسال التصفير التلقائي)
-    app.add_handler(MessageHandler(filters.ChatType.GROUPS, store_group_chat), group=1)
-
-    # 7ج. التقرير اليومي والتصفير التلقائي بتوقيت العراق (4 الفجر و 6 الصبح) — يحتاج تثبيت: pip install "python-telegram-bot[job-queue]"
-    if app.job_queue is not None:
-        iraq_tz = timezone(timedelta(hours=3))  # العراق = UTC+3
-        app.job_queue.run_daily(send_daily_report_callback, time=dt_time(4, 0, tzinfo=iraq_tz))   # الساعة 4 صباحاً
-        app.job_queue.run_daily(auto_reset_broadcast_callback, time=dt_time(6, 0, tzinfo=iraq_tz))  # الساعة 6 صباحاً
-        logger.info("JobQueue: التقرير اليومي (4 ص) والتصفير التلقائي (6 ص) مفعّلين.")
-    else:
-        logger.warning("JobQueue غير متوفر. ثبّت: pip install \"python-telegram-bot[job-queue]\" لتفعيل التقرير والتصفير التلقائي.")
 
     # 8. ConversationHandler لعدد المحلات
     places_conv_handler = ConversationHandler(
@@ -2036,7 +1756,7 @@ def main():
     # 10. ConversationHandler للطلبات والتسعير (المدخل الرئيسي)
     order_creation_conv_handler = ConversationHandler(
         entry_points=[
-            MessageHandler(filters.TEXT & ~filters.COMMAND, logic_old.receive_order),
+            MessageHandler(filters.TEXT & ~filters.COMMAND, receive_order),
             CallbackQueryHandler(product_selected, pattern=r"^[a-f0-9]{8}\|\d+$"),
             CallbackQueryHandler(add_new_product_callback, pattern=r"^add_product_to_order_.*$"),
             CallbackQueryHandler(delete_product_callback, pattern=r"^delete_specific_product_.*$"), 
@@ -2057,24 +1777,8 @@ def main():
     )
     app.add_handler(order_creation_conv_handler)
 
-    # تشغيل البوت: إذا Flask مثبت نفتح خادم الطلبات على PORT؛ وإلا تشغيل عادي (النسخ واللصق في الكروب الثاني يشتغل بدون Flask)
-    try:
-        import flask as _flask
-    except ImportError:
-        _flask = None
-    if _flask is not None:
-        port = int(os.getenv("PORT", "8080"))
-        bot_thread = threading.Thread(
-            target=app.run_polling,
-            kwargs={"allowed_updates": Update.ALL_TYPES},
-            daemon=True,
-        )
-        bot_thread.start()
-        logger.info("Bot polling started in background; order webhook server listening on port %s", port)
-        _run_order_webhook_server(port)
-    else:
-        logger.info("Flask not installed: running bot only (paste order in target group works). Add 'flask' to requirements.txt for /incoming-order HTTP).")
-        app.run_polling(allowed_updates=Update.ALL_TYPES)
+    # تشغيل البوت
+    app.run_polling(allowed_updates=Update.ALL_TYPES)
    
 
 async def show_supplier_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2404,7 +2108,7 @@ async def handle_incomplete_order_selection(update: Update, context: ContextType
             )
 
             # عرض الطلبية المحددة بأزرارها
-            await logic_old.show_buttons(chat_id, context, user_id, order_id, 
+            await show_buttons(chat_id, context, user_id, order_id, 
                              confirmation_message=confirmation_message)
             
     except Exception as e:
