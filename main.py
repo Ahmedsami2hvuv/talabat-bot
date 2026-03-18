@@ -2446,52 +2446,166 @@ async def do_scheduled_reset(context: ContextTypes.DEFAULT_TYPE):
 def _build_report_fish_text(orders, pricing, invoice_numbers):
     """بناء نص فواتير السمك (كل الطلبات، منتجات السمك فقط) للتقرير."""
     lines = ["🐟 **فواتير السمك (تقرير)**\n"]
+    total_buy_all = 0.0
+    total_sell_all = 0.0
+    total_profit_all = 0.0
+
     for order_id, order in orders.items():
-        fish_items = [(p_name, pricing.get(order_id, {}).get(p_name, {})) for p_name in order.get("products", []) if is_fish(p_name)]
+        fish_items = [
+            (p_name, pricing.get(order_id, {}).get(p_name, {}))
+            for p_name in order.get("products", [])
+            if is_fish(p_name)
+        ]
         if not fish_items:
             continue
+
         inv = invoice_numbers.get(order_id, "??")
         lines.append(f"فاتورة #{inv} | {order.get('title', '')} | {order.get('phone_number', '')}")
+
+        fish_buy_sum = 0.0
+        fish_sell_sum = 0.0
+        fish_profit_sum = 0.0
+
         for p_name, p_data in fish_items:
-            buy = p_data.get("buy", 0)
+            buy = float(p_data.get("buy", 0.0) or 0.0)
+            sell = float(p_data.get("sell", 0.0) or 0.0)
+            profit = sell - buy
             who = p_data.get("prepared_by_name", "غير معروف")
-            lines.append(f"  • {p_name}: {format_float(buy)} — جهزه ({who})")
+
+            fish_buy_sum += buy
+            fish_sell_sum += sell
+            fish_profit_sum += profit
+
+            lines.append(
+                f"  • {p_name}: شراء {format_float(buy)} | بيع {format_float(sell)} | ربح {format_float(profit)} — جهزه ({who})"
+            )
+
+        lines.append(f"  مجموع شراء السمك: {format_float(fish_buy_sum)}")
+        lines.append(f"  مجموع بيع السمك: {format_float(fish_sell_sum)}")
+        lines.append(f"  ربح السمك: {format_float(fish_profit_sum)}")
         lines.append("")
-    return "\n".join(lines) if len(lines) > 1 else "ماكو فواتير سمك مسجلة."
+
+        total_buy_all += fish_buy_sum
+        total_sell_all += fish_sell_sum
+        total_profit_all += fish_profit_sum
+
+    if len(lines) <= 1:
+        return "ماكو فواتير سمك مسجلة."
+
+    lines.append(
+        f"**المجموع الكلي (كل الطلبات):** شراء {format_float(total_buy_all)} | بيع {format_float(total_sell_all)} | ربح {format_float(total_profit_all)}"
+    )
+    return "\n".join(lines)
 
 
 def _build_report_veg_text(orders, pricing, invoice_numbers):
     """بناء نص فواتير الخضروات والفواكه للتقرير."""
     lines = ["🥬 **فواتير الخضروات والفواكه (تقرير)**\n"]
+    total_buy_all = 0.0
+    total_sell_all = 0.0
+    total_profit_all = 0.0
+
     for order_id, order in orders.items():
-        veg_items = [(p_name, pricing.get(order_id, {}).get(p_name, {})) for p_name in order.get("products", []) if is_vegetable_fruit(p_name)]
+        veg_items = [
+            (p_name, pricing.get(order_id, {}).get(p_name, {}))
+            for p_name in order.get("products", [])
+            if is_vegetable_fruit(p_name)
+        ]
         if not veg_items:
             continue
+
         inv = invoice_numbers.get(order_id, "??")
         lines.append(f"فاتورة #{inv} | {order.get('title', '')} | {order.get('phone_number', '')}")
+
+        veg_buy_sum = 0.0
+        veg_sell_sum = 0.0
+        veg_profit_sum = 0.0
+
         for p_name, p_data in veg_items:
-            buy = p_data.get("buy", 0)
+            buy = float(p_data.get("buy", 0.0) or 0.0)
+            sell = float(p_data.get("sell", 0.0) or 0.0)
+            profit = sell - buy
             who = p_data.get("prepared_by_name", "غير معروف")
-            lines.append(f"  • {p_name}: {format_float(buy)} — جهزه ({who})")
+
+            veg_buy_sum += buy
+            veg_sell_sum += sell
+            veg_profit_sum += profit
+
+            lines.append(
+                f"  • {p_name}: شراء {format_float(buy)} | بيع {format_float(sell)} | ربح {format_float(profit)} — جهزه ({who})"
+            )
+
+        lines.append(f"  مجموع شراء الخضروات/الفواكه: {format_float(veg_buy_sum)}")
+        lines.append(f"  مجموع بيع الخضروات/الفواكه: {format_float(veg_sell_sum)}")
+        lines.append(f"  ربح الخضروات/الفواكه: {format_float(veg_profit_sum)}")
         lines.append("")
-    return "\n".join(lines) if len(lines) > 1 else "ماكو فواتير خضروات/فواكه مسجلة."
+
+        total_buy_all += veg_buy_sum
+        total_sell_all += veg_sell_sum
+        total_profit_all += veg_profit_sum
+
+    if len(lines) <= 1:
+        return "ماكو فواتير خضروات/فواكه مسجلة."
+
+    lines.append(
+        f"**المجموع الكلي (كل الطلبات):** شراء {format_float(total_buy_all)} | بيع {format_float(total_sell_all)} | ربح {format_float(total_profit_all)}"
+    )
+    return "\n".join(lines)
 
 
 def _build_report_meat_text(orders, pricing, invoice_numbers):
     """بناء نص فواتير اللحم للتقرير."""
     lines = ["🥩 **فواتير اللحم (تقرير)**\n"]
+    total_buy_all = 0.0
+    total_sell_all = 0.0
+    total_profit_all = 0.0
+
     for order_id, order in orders.items():
-        meat_items = [(p_name, pricing.get(order_id, {}).get(p_name, {})) for p_name in order.get("products", []) if is_meat(p_name)]
+        meat_items = [
+            (p_name, pricing.get(order_id, {}).get(p_name, {}))
+            for p_name in order.get("products", [])
+            if is_meat(p_name)
+        ]
         if not meat_items:
             continue
+
         inv = invoice_numbers.get(order_id, "??")
         lines.append(f"فاتورة #{inv} | {order.get('title', '')} | {order.get('phone_number', '')}")
+
+        meat_buy_sum = 0.0
+        meat_sell_sum = 0.0
+        meat_profit_sum = 0.0
+
         for p_name, p_data in meat_items:
-            buy = p_data.get("buy", 0)
+            buy = float(p_data.get("buy", 0.0) or 0.0)
+            sell = float(p_data.get("sell", 0.0) or 0.0)
+            profit = sell - buy
             who = p_data.get("prepared_by_name", "غير معروف")
-            lines.append(f"  • {p_name}: {format_float(buy)} — جهزه ({who})")
+
+            meat_buy_sum += buy
+            meat_sell_sum += sell
+            meat_profit_sum += profit
+
+            lines.append(
+                f"  • {p_name}: شراء {format_float(buy)} | بيع {format_float(sell)} | ربح {format_float(profit)} — جهزه ({who})"
+            )
+
+        lines.append(f"  مجموع شراء اللحم: {format_float(meat_buy_sum)}")
+        lines.append(f"  مجموع بيع اللحم: {format_float(meat_sell_sum)}")
+        lines.append(f"  ربح اللحم: {format_float(meat_profit_sum)}")
         lines.append("")
-    return "\n".join(lines) if len(lines) > 1 else "ماكو فواتير لحم مسجلة."
+
+        total_buy_all += meat_buy_sum
+        total_sell_all += meat_sell_sum
+        total_profit_all += meat_profit_sum
+
+    if len(lines) <= 1:
+        return "ماكو فواتير لحم مسجلة."
+
+    lines.append(
+        f"**المجموع الكلي (كل الطلبات):** شراء {format_float(total_buy_all)} | بيع {format_float(total_sell_all)} | ربح {format_float(total_profit_all)}"
+    )
+    return "\n".join(lines)
 
 
 async def show_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
