@@ -433,19 +433,8 @@ async def _append_or_edit_topic(
             )
             msg_id = msg.message_id
         except Exception as e:
-            logger.error(f"Topic send failed ({state_key} thread_id={thread_id}) with Markdown parse_mode: {e}", exc_info=True)
-            # إذا فشل Markdown بسبب تنسيق النص/رموز، جرّب بدون parse_mode حتى توصل الفاتورة
-            try:
-                msg = await context.bot.send_message(
-                    chat_id=REPORTS_CHAT_ID,
-                    message_thread_id=thread_id,
-                    text=text,
-                    parse_mode=None,
-                )
-                msg_id = msg.message_id
-            except Exception as e2:
-                logger.error(f"Topic send failed ({state_key} thread_id={thread_id}) without parse_mode: {e2}", exc_info=True)
-                return
+            logger.error(f"Topic send failed ({state_key} thread_id={thread_id}): {e}", exc_info=True)
+            return
 
     state[state_key] = {"message_id": int(msg_id), "body": body}
     # حفظ فوري حتى كل النسخ تستخدم نفس state
