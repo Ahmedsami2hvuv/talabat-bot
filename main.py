@@ -59,8 +59,8 @@ def _parse_hour_min(env_key: str, default_hour: str, default_min: str) -> tuple:
     m = int(os.getenv(env_key.replace("HOUR", "MINUTE"), default_min))
     return h, m
 
-_report_h, _report_m = _parse_hour_min("REPORT_DAILY_HOUR", "10", "27")
-_reset_h, _reset_m = _parse_hour_min("RESET_DAILY_HOUR", "10", "29")
+_report_h, _report_m = _parse_hour_min("REPORT_DAILY_HOUR", "10", "37")
+_reset_h, _reset_m = _parse_hour_min("RESET_DAILY_HOUR", "10", "39")
 REPORT_DAILY_HOUR = _report_h
 REPORT_DAILY_MINUTE = _report_m
 RESET_DAILY_HOUR = _reset_h
@@ -1752,6 +1752,27 @@ async def start_new_order_callback(update: Update, context: ContextTypes.DEFAULT
         return ConversationHandler.END
 
 # الدوال الخاصة بالتقارير والأرباح (ستُجزأ لاحقاً إلى features/reports.py)
+def _compute_overall_profit(orders: dict, pricing: dict) -> float:
+    total_net_profit_products_all_orders = 0.0
+    total_extra_profit_all_orders = 0.0
+
+    for order_id, order_data in orders.items():
+        order_net_profit_products = 0.0
+        if isinstance(order_data.get("products"), list):
+            for p_name in order_data["products"]:
+                p = pricing.get(order_id, {}).get(p_name, {})
+                if "buy" in p and "sell" in p:
+                    order_net_profit_products += (p["sell"] - p["buy"])
+
+        num_places = order_data.get("places_count", 0)
+        order_extra_profit_single_order = calculate_extra(num_places)
+
+        total_net_profit_products_all_orders += order_net_profit_products
+        total_extra_profit_all_orders += order_extra_profit_single_order
+
+    return float(total_net_profit_products_all_orders + total_extra_profit_all_orders)
+
+
 async def show_profit(update: Update, context: ContextTypes.DEFAULT_TYPE):
     orders = context.application.bot_data['orders'] # نجيب كل الطلبيات
     pricing = context.application.bot_data['pricing'] # نحتاج الأسعار لحساب الربح
@@ -1761,30 +1782,7 @@ async def show_profit(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("😏لاتاكل خره ماتكدر تسوي هالشي.")
             return
 
-        total_net_profit_products_all_orders = 0.0 # صافي ربح المنتجات الكلي
-        total_extra_profit_all_orders = 0.0 # ربح المحلات الكلي
-
-        for order_id, order_data in orders.items():
-            order_net_profit_products = 0.0 # ربح منتجات الطلبية الواحدة
-            order_extra_profit_single_order = 0.0 # ربح محلات الطلبية الواحدة
-
-            # حساب ربح المنتجات للطلبية
-            if isinstance(order_data.get("products"), list):
-                for p_name in order_data["products"]:
-                    if p_name in pricing.get(order_id, {}) and "buy" in pricing[order_id].get(p_name, {}) and "sell" in pricing[order_id].get(p_name, {}):
-                        buy = pricing[order_id][p_name]["buy"]
-                        sell = pricing[order_id][p_name]["sell"]
-                        order_net_profit_products += (sell - buy)
-
-            # حساب ربح المحلات للطلبية
-            num_places = order_data.get("places_count", 0)
-            order_extra_profit_single_order = calculate_extra(num_places) # نستخدم الدالة الموجودة
-
-            total_net_profit_products_all_orders += order_net_profit_products
-            total_extra_profit_all_orders += order_extra_profit_single_order
-
-        # مجموع الربح الكلي (منتجات + محلات)
-        overall_cumulative_profit = total_net_profit_products_all_orders + total_extra_profit_all_orders
+        overall_cumulative_profit = _compute_overall_profit(orders, pricing)
 
         logger.info(f"Overall cumulative profit requested by user {update.message.from_user.id}: {overall_cumulative_profit}")
         await update.message.reply_text(f"ربح البيع والتجهيز💵: *{format_float(overall_cumulative_profit)}* دينار", parse_mode="Markdown")
@@ -1950,6 +1948,7 @@ async def send_scheduled_report(context: ContextTypes.DEFAULT_TYPE):
         pricing = context.application.bot_data['pricing']
         invoice_numbers = context.application.bot_data['invoice_numbers']
         result, report_fish, report_veg, report_meat = _build_full_report_parts(orders, pricing, invoice_numbers)
+        overall_cumulative_profit = _compute_overall_profit(orders, pricing)
         for owner_id in OWNER_IDS:
             try:
                 for chunk_start in range(0, len(result), 4096):
@@ -1960,6 +1959,12 @@ async def send_scheduled_report(context: ContextTypes.DEFAULT_TYPE):
                     await context.bot.send_message(chat_id=owner_id, text=report_veg[chunk_start:chunk_start + 4096], parse_mode="Markdown")
                 for chunk_start in range(0, len(report_meat), 4096):
                     await context.bot.send_message(chat_id=owner_id, text=report_meat[chunk_start:chunk_start + 4096], parse_mode="Markdown")
+                # بعد التقارير، إرسال رسالة الأرباح مثل أمر "ارباح/ار"
+                await context.bot.send_message(
+                    chat_id=owner_id,
+                    text=f"ربح البيع والتجهيز💵: *{format_float(overall_cumulative_profit)}* دينار",
+                    parse_mode="Markdown"
+                )
             except Exception as e:
                 logger.error(f"Error sending scheduled report to owner {owner_id}: {e}")
         logger.info("Scheduled report sent to owners.")
