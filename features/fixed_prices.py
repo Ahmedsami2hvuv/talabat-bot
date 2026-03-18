@@ -145,3 +145,4 @@ def suggest_fixed_prices(product_text: str, price_table: dict | None = None) -> 
         "buy_total": buy_per * float(qty),
         "sell_total": sell_per * float(qty),
     }
+
