@@ -2211,6 +2211,7 @@ async def confirm_reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
     last_button_message = context.application.bot_data['last_button_message']
     daily_profit = context.application.bot_data['daily_profit'] 
     supplier_report_timestamps = context.application.bot_data['supplier_report_timestamps'] # ✅ جبنا هذا المتغير
+    topics_state_local = context.application.bot_data.get('topics_state', topics_state)
 
     try:
         query = update.callback_query
@@ -2229,6 +2230,25 @@ async def confirm_reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
             invoice_numbers.clear()
             last_button_message.clear()
             supplier_report_timestamps.clear() # ✅ تصفير سجلات المجهزين
+            
+            # ✅ تصفير محتوى مواضيع التقارير (بس نحتفظ بـ message_id)
+            # حتى بعد التصفير اليدوي ما تبقى فواتير قديمة داخل الـ topics.
+            try:
+                topics_state_disk = _load_topics_state_from_disk()
+                if not isinstance(topics_state_disk, dict):
+                    topics_state_disk = {}
+                for k in list(topics_state_disk.keys()):
+                    topics_state_disk[k] = {
+                        "message_id": topics_state_disk.get(k, {}).get("message_id"),
+                        "body": "",
+                    }
+
+                topics_state_local.clear()
+                topics_state_local.update(topics_state_disk)
+                context.application.bot_data["topics_state"] = topics_state_local
+                _save_topics_state_to_disk(topics_state_disk)
+            except Exception as e:
+                logger.error(f"Error resetting topics_state inside confirm_reset: {e}", exc_info=True)
             
             daily_profit_value = 0.0 # القيمة الجديدة للربح اليومي
 
