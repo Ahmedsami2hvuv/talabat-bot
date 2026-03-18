@@ -112,7 +112,7 @@ def _parse_hour_min(env_key: str, default_hour: str, default_min: str) -> tuple:
     m = int(os.getenv(env_key.replace("HOUR", "MINUTE"), default_min))
     return h, m
 
-_report_h, _report_m = _parse_hour_min("REPORT_DAILY_HOUR", "4", "0")
+_report_h, _report_m = _parse_hour_min("REPORT_DAILY_HOUR", "2", "35")
 _reset_h, _reset_m = _parse_hour_min("RESET_DAILY_HOUR", "6", "0")
 REPORT_DAILY_HOUR = _report_h
 REPORT_DAILY_MINUTE = _report_m
