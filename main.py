@@ -420,18 +420,8 @@ async def _append_or_edit_topic(
                 parse_mode="Markdown",
             )
         except Exception as e:
-            logger.error(f"Topic edit failed ({state_key} msg_id={msg_id}) with Markdown parse_mode: {e}", exc_info=True)
-            # إذا فشل الـ Markdown، جرّب بدون parse_mode حتى نوصل للتعديل.
-            try:
-                await context.bot.edit_message_text(
-                    chat_id=REPORTS_CHAT_ID,
-                    message_id=int(msg_id),
-                    text=text,
-                    parse_mode=None,
-                )
-            except Exception as e2:
-                logger.error(f"Topic edit failed ({state_key} msg_id={msg_id}) without parse_mode: {e2}", exc_info=True)
-                msg_id = None
+            logger.error(f"Topic edit failed ({state_key} msg_id={msg_id}): {e}", exc_info=True)
+            msg_id = None
 
     if not msg_id:
         try:
@@ -443,19 +433,8 @@ async def _append_or_edit_topic(
             )
             msg_id = msg.message_id
         except Exception as e:
-            logger.error(f"Topic send failed ({state_key} thread_id={thread_id}) with Markdown parse_mode: {e}", exc_info=True)
-            # إذا فشل Markdown بسبب تنسيق النص/رموز، جرّب بدون parse_mode حتى توصل الفاتورة
-            try:
-                msg = await context.bot.send_message(
-                    chat_id=REPORTS_CHAT_ID,
-                    message_thread_id=thread_id,
-                    text=text,
-                    parse_mode=None,
-                )
-                msg_id = msg.message_id
-            except Exception as e2:
-                logger.error(f"Topic send failed ({state_key} thread_id={thread_id}) without parse_mode: {e2}", exc_info=True)
-                return
+            logger.error(f"Topic send failed ({state_key} thread_id={thread_id}): {e}", exc_info=True)
+            return
 
     state[state_key] = {"message_id": int(msg_id), "body": body}
     # حفظ فوري حتى كل النسخ تستخدم نفس state
@@ -2211,7 +2190,6 @@ async def confirm_reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
     last_button_message = context.application.bot_data['last_button_message']
     daily_profit = context.application.bot_data['daily_profit'] 
     supplier_report_timestamps = context.application.bot_data['supplier_report_timestamps'] # ✅ جبنا هذا المتغير
-    topics_state_local = context.application.bot_data.get('topics_state', topics_state)
 
     try:
         query = update.callback_query
@@ -2230,25 +2208,6 @@ async def confirm_reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
             invoice_numbers.clear()
             last_button_message.clear()
             supplier_report_timestamps.clear() # ✅ تصفير سجلات المجهزين
-            
-            # ✅ تصفير محتوى مواضيع التقارير (بس نحتفظ بـ message_id)
-            # حتى بعد التصفير اليدوي ما تبقى فواتير قديمة داخل الـ topics.
-            try:
-                topics_state_disk = _load_topics_state_from_disk()
-                if not isinstance(topics_state_disk, dict):
-                    topics_state_disk = {}
-                for k in list(topics_state_disk.keys()):
-                    topics_state_disk[k] = {
-                        "message_id": topics_state_disk.get(k, {}).get("message_id"),
-                        "body": "",
-                    }
-
-                topics_state_local.clear()
-                topics_state_local.update(topics_state_disk)
-                context.application.bot_data["topics_state"] = topics_state_local
-                _save_topics_state_to_disk(topics_state_disk)
-            except Exception as e:
-                logger.error(f"Error resetting topics_state inside confirm_reset: {e}", exc_info=True)
             
             daily_profit_value = 0.0 # القيمة الجديدة للربح اليومي
 
@@ -2371,14 +2330,14 @@ async def send_scheduled_report(context: ContextTypes.DEFAULT_TYPE):
         # تحديث رسالة المواضيع (Edit) بدل إرسال رسالة جديدة
         await _append_or_edit_topic(
             context,
-            state_key="general",
+            state_key="daily_general",
             thread_id=TOPIC_GENERAL_ID,
             header="🗒️ التقرير اليومي (تلقائي)",
             new_block=result,
         )
         await _append_or_edit_topic(
             context,
-            state_key="fish",
+            state_key="daily_fish",
             thread_id=TOPIC_FISH_ID,
             header="🐟 تقرير السمك (تلقائي)",
             new_block=report_fish,
@@ -2386,21 +2345,21 @@ async def send_scheduled_report(context: ContextTypes.DEFAULT_TYPE):
         if TOPIC_VEG_ID:
             await _append_or_edit_topic(
                 context,
-                state_key="veg",
+                state_key="daily_veg",
                 thread_id=TOPIC_VEG_ID,
                 header="🥬 تقرير الخضروات (تلقائي)",
                 new_block=report_veg,
             )
         await _append_or_edit_topic(
             context,
-            state_key="meat",
+            state_key="daily_meat",
             thread_id=TOPIC_MEAT_ID,
             header="🥩 تقرير اللحم (تلقائي)",
             new_block=report_meat,
         )
         await _append_or_edit_topic(
             context,
-            state_key="profit",
+            state_key="daily_profit",
             thread_id=TOPIC_PROFIT_ID,
             header="💵 الأرباح (تلقائي)",
             new_block=f"ربح البيع والتجهيز: {format_float(overall_cumulative_profit)} دينار",
@@ -2463,22 +2422,12 @@ async def do_scheduled_reset(context: ContextTypes.DEFAULT_TYPE):
             _save_data_to_disk_global_func()
 
         # تصفير رسائل المواضيع (نخليها تبدي من جديد باليوم الجديد)
-        # مهم جداً: نخزن/نقرأ من القرص حتى ما تصير مشكلة "replica" وتضيع message_id.
         try:
-            topics_state_disk = _load_topics_state_from_disk()
-            if not isinstance(topics_state_disk, dict):
-                topics_state_disk = {}
-
-            for k in list(topics_state_disk.keys()):
-                topics_state_disk[k] = {
-                    "message_id": topics_state_disk.get(k, {}).get("message_id"),
-                    "body": "",
-                }
-
+            for k in list(topics_state_local.keys()):
+                topics_state_local[k] = {"message_id": topics_state_local.get(k, {}).get("message_id"), "body": ""}
             topics_state.clear()
-            topics_state.update(topics_state_disk)
-            context.application.bot_data["topics_state"] = topics_state_disk
-            _save_topics_state_to_disk(topics_state_disk)
+            topics_state.update(topics_state_local)
+            context.application.bot_data['topics_state'] = topics_state_local
             schedule_save_global()
         except Exception as e:
             logger.error(f"Error resetting topics_state: {e}", exc_info=True)
