@@ -24,6 +24,13 @@ from features.delivery_zones import (
 )
 # ✅ تصنيف المنتجات (سمك، خضروات، لحم) لبناء فواتير منفصلة
 from features.product_categories import is_fish, is_vegetable_fruit, is_meat
+try:
+    # أسعار ثابتة (اختياري) — إذا الملف مو موجود بالديبلوي، لا نكسر تشغيل البوت
+    from features.fixed_prices import suggest_fixed_prices
+except Exception as e:
+    logging.getLogger(__name__).warning(f"fixed_prices disabled: {e}")
+    def suggest_fixed_prices(_product_text: str, _price_table=None):  # type: ignore
+        return None
 
 # ✅ تفعيل الـ logging للحصول على تفاصيل الأخطاء والعمليات
 logging.basicConfig(
@@ -1104,9 +1111,52 @@ async def product_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
         current_sell = pricing.get(order_id, {}).get(product, {}).get("sell")
 
         message_prompt = ""
+        is_editing = context.user_data.get(user_id, {}).get("editing_mode", False)
         if current_buy is not None and current_sell is not None:
             message_prompt = f"سعر *'{product}'* حالياً: {format_float(current_buy)} / {format_float(current_sell)}.\nدز السعر الجديد (شراء وبيع):"
         else:
+            # إذا مو وضع التعديل و المنتج ضمن أسعار ثابتة، نخليه يطلع سعر تلقائياً من ذاته
+            if not is_editing:
+                suggestion = suggest_fixed_prices(product)
+                if suggestion:
+                    suggested_buy = float(suggestion["buy_total"])
+                    suggested_sell = float(suggestion["sell_total"])
+                    pricing[order_id][product] = {
+                        "buy": suggested_buy,
+                        "sell": suggested_sell,
+                        "prepared_by_name": query.from_user.first_name,
+                        "prepared_by_id": user_id,
+                    }
+                    context.application.create_task(save_data_in_background(context))
+                    
+                    # إذا كل منتجات الطلب تم تسعيرها (تلقائي بالكامل)، لازم نكمل مباشرة
+                    # لمرحلة اختيار عدد المحلات؛ حتى لا توقف الطلبية بين الطلبات.
+                    current_order_products = orders[order_id].get("products", [])
+                    is_order_complete = all(
+                        p in pricing.get(order_id, {})
+                        and "buy" in pricing.get(order_id, {}).get(p, {})
+                        and "sell" in pricing.get(order_id, {}).get(p, {})
+                        for p in current_order_products
+                    )
+
+                    if is_order_complete:
+                        await request_places_count_standalone(
+                            query.message.chat_id,
+                            context,
+                            user_id,
+                            order_id,
+                        )
+                        return ConversationHandler.END
+                    else:
+                        await show_buttons(
+                            query.message.chat_id,
+                            context,
+                            user_id,
+                            order_id,
+                            confirmation_message=f"✅ تسعير تلقائي لـ *{product}* حسب السعر الثابت.",
+                        )
+                        return ConversationHandler.END
+
             message_prompt = (
                 f"تمام، بيش اشتريت *'{product}'*؟ (بالسطر الأول)\n"
                 f"وبييش راح تبيعه؟ (بالسطر الثاني)\n\n"
@@ -1142,6 +1192,8 @@ async def cancel_price_entry_callback(update: Update, context: ContextTypes.DEFA
     if user_id in context.user_data:
         context.user_data[user_id].pop("order_id", None)
         context.user_data[user_id].pop("product", None)
+        context.user_data[user_id].pop("suggested_buy_price", None)
+        context.user_data[user_id].pop("suggested_sell_price", None)
     
     # حذف رسالة "ادخل السعر"
     try:
@@ -1337,10 +1389,16 @@ async def receive_buy_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
         input_text = update.message.text.strip().split()
         
         try:
+            suggested_buy = context.user_data.get(user_id, {}).get("suggested_buy_price")
             if len(input_text) == 1:
-                # إذا دز رقم واحد، نعتبر الشراء والبيع نفس الشيء
-                buy_price = float(input_text[0])
-                sell_price = float(input_text[0])
+                if suggested_buy is not None:
+                    # إذا عدنا شراء مقترح: الرقم الواحد = بيع فقط
+                    buy_price = float(suggested_buy)
+                    sell_price = float(input_text[0])
+                else:
+                    # إذا دز رقم واحد، نعتبر الشراء والبيع نفس الشيء
+                    buy_price = float(input_text[0])
+                    sell_price = float(input_text[0])
             elif len(input_text) >= 2:
                 # إذا دز رقمين، الأول شراء والثاني بيع
                 buy_price = float(input_text[0])
@@ -1386,6 +1444,8 @@ async def receive_buy_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # تنظيف بيانات الجلسة المؤقتة
         context.user_data[user_id].pop("order_id", None)
         context.user_data[user_id].pop("product", None)
+        context.user_data[user_id].pop("suggested_buy_price", None)
+        context.user_data[user_id].pop("suggested_sell_price", None)
 
         # 6. التحقق هل اكتمل الطلب؟
         current_order_products = orders[order_id].get("products", [])
@@ -1820,12 +1880,10 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
             f"\nعنوان الزبون🏠: {order['title']}",
             f"\nتفاصيل الطلبية:🗒",
             *admin_details,
-            f"\nإجمالي الشراء:💸 {format_float(total_buy)}",
-            f"إجمالي البيع:💵  {format_float(total_sell)}",
-            f"ربح المنتجات:💲 {format_float(total_sell - total_buy)}",
-            f"ربح المحلات ({places_count} محل):🏪 {format_float(extra_cost)}",
-            f"أجرة التوصيل:🚚 {format_float(delivery)}",
-            f"المجموع الكلي:💰 {format_float(grand_total)}"
+            "",
+            f"💸 شراء {format_float(total_buy)} | 💵 بيع {format_float(total_sell)}",
+            f"🏪 محلات {format_float(extra_cost)} | 💲 منتجات {format_float(total_sell - total_buy)} | 📈 ربح {format_float((total_sell - total_buy) + extra_cost)}",
+            f"🚚 توصيل {format_float(delivery)} | 💰 مجموع {format_float(grand_total)}",
         ]
         admin_text = "\n".join(admin_msg)
 
