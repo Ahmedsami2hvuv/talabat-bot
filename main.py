@@ -410,6 +410,33 @@ async def _append_or_edit_topic(
         text += "\n\n" + footer.strip()
     text = _truncate_for_telegram(text)
 
+    # مزامنة ثانية قبل التعديل/الإرسال: بعد التصفير يُمسح topics_state من القرص؛
+    # بدون هذا قد نُعدّل رسالة قديمة ونُعيد message_id القديم (سباق مع confirm_reset / التصفير التلقائي).
+    state_sync = _load_topics_state_from_disk()
+    if not isinstance(state_sync, dict):
+        state_sync = {}
+    if state_key not in state_sync:
+        msg_id = None
+        body = new_block.strip() if new_block else ""
+        text = header.strip()
+        if body:
+            text += "\n\n" + body
+        if footer:
+            text += "\n\n" + footer.strip()
+        text = _truncate_for_telegram(text)
+    else:
+        entry_sync = state_sync.get(state_key) or {}
+        msg_id = entry_sync.get("message_id")
+        prev_body = (entry_sync.get("body") or "").strip()
+        if new_block:
+            body = (prev_body + "\n\n" + new_block).strip() if prev_body else new_block.strip()
+        text = header.strip()
+        if body:
+            text += "\n\n" + body
+        if footer:
+            text += "\n\n" + footer.strip()
+        text = _truncate_for_telegram(text)
+
     # نفضّل التعديل. إذا فشل (مثلاً message not found)، نرسل جديد ونحدّث الحالة.
     if msg_id:
         try:
@@ -457,6 +484,9 @@ async def _append_or_edit_topic(
                 logger.error(f"Topic send failed ({state_key} thread_id={thread_id}) without parse_mode: {e2}", exc_info=True)
                 return
 
+    state = _load_topics_state_from_disk()
+    if not isinstance(state, dict):
+        state = {}
     state[state_key] = {"message_id": int(msg_id), "body": body}
     # حفظ فوري حتى كل النسخ تستخدم نفس state
     _save_topics_state_to_disk(state)
