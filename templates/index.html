@@ -141,7 +141,12 @@
                 ordersData = await res.json();
                 renderList();
                 updateNewCount();
-                if(currentOrderId && document.getElementById('priceModal').classList.contains('show')) renderProducts();
+                if(currentOrderId && document.getElementById('priceModal').classList.contains('show')) {
+                    const order = ordersData.orders[currentOrderId];
+                    if (!(order && order.places_count > 0)) {
+                        renderProducts();
+                    }
+                }
             } catch (e) { console.error(e); }
         }
 
@@ -247,9 +252,14 @@
 
         function hidePriceInput() { document.getElementById('price-input-area').style.display = 'none'; }
         function checkDone() {
-            const order = ordersData.orders[currentOrderId]; const pricing = ordersData.pricing[currentOrderId] || {};
+            const order = ordersData.orders[currentOrderId]; 
+            const pricing = ordersData.pricing[currentOrderId] || {};
+            if (order && order.places_count > 0) {
+                 if(document.getElementById('finalize-area')) document.getElementById('finalize-area').style.display = 'none';
+                 return;
+            }
             const isDone = order.products.every(p => pricing[p] && pricing[p].sell);
-            document.getElementById('finalize-area').style.display = isDone ? 'block' : 'none';
+            if(document.getElementById('finalize-area')) document.getElementById('finalize-area').style.display = isDone ? 'block' : 'none';
         }
         async function finishOrder(c) {
             await fetch('/api/finalize', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({order_id: currentOrderId, places_count: c})});
