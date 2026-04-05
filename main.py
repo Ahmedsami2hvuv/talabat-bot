@@ -66,7 +66,7 @@ init_db()
 # --- وظائف المساعدة للتحليل الذكي ---
 def _extract_phone_from_text(text):
     raw = re.sub(r"[\s\-]", "", text)
-    m = re.search(r"(?:\+?964)?0?7\d{9}", raw)
+    m = re.search(r"(?:\+?964|0)?7\d{9}", raw)
     if m:
         digits = re.sub(r"\D", "", m.group(0))
         if digits.startswith("964"): digits = digits[3:]
@@ -82,9 +82,15 @@ def parse_bulk_order(raw_text):
     except:
         zone = None
     title = zone if zone else (lines[0] if lines else "عنوان غير معروف")
+
     products = []
+    # تنظيف الرقم للمقارنة
+    clean_phone = re.sub(r"\D", "", phone) if phone != "مطلوب" else ""
+
     for line in lines:
-        if phone != "مطلوب" and phone in line.replace(" ", ""): continue
+        line_clean = re.sub(r"\D", "", line)
+        # إذا السطر يحتوي على الرقم، نتجاهله ولا نعتبره منتجاً
+        if clean_phone and clean_phone in line_clean and len(line_clean) >= 9: continue
         if zone and zone in line: continue
         if len(line) < 2: continue
         products.append(line)
@@ -93,7 +99,7 @@ def parse_bulk_order(raw_text):
 # --- وظائف إدارة البيانات (قاعدة البيانات) ---
 def fetch_all_data_db():
     conn = get_db_connection()
-    if not conn: return {}, {}, {}, {}
+    if not conn: return {}, {}, {}
     orders_dict = {}
     pricing_dict = {}
     invoice_dict = {}
@@ -104,13 +110,14 @@ def fetch_all_data_db():
         for i, r in enumerate(rows):
             oid = r['id']
             orders_dict[oid] = {
+                "id": oid,
                 "title": r['title'],
                 "phone_number": r['phone_number'],
                 "products": r['products'],
                 "places_count": r['places_count'],
                 "created_at": r['created_at'].isoformat()
             }
-            invoice_dict[oid] = i + 1 # تبسيط للمثال
+            invoice_dict[oid] = i + 1
 
         cur.execute("SELECT * FROM pricing")
         rows_p = cur.fetchall()
@@ -181,7 +188,7 @@ def reset_data():
     conn = get_db_connection()
     if conn:
         with conn.cursor() as cur:
-            cur.execute("DELETE FROM orders") # سيمسح الأسعار أيضاً بسبب CASCADE
+            cur.execute("DELETE FROM orders")
         conn.commit()
         conn.close()
     return jsonify({"status": "success"})

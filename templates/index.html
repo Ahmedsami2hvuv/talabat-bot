@@ -33,7 +33,6 @@
 
     <div class="container">
         <div class="row">
-            <!-- إضافة طلب -->
             <div class="col-md-5">
                 <div class="card p-3">
                     <h5 class="card-title border-bottom pb-2">📝 إضافة طلب جديد</h5>
@@ -44,7 +43,6 @@
                 </div>
             </div>
 
-            <!-- قائمة الطلبات المقسمة -->
             <div class="col-md-7">
                 <ul class="nav nav-pills mb-3 justify-content-center" id="orderTabs">
                     <li class="nav-item">
@@ -52,19 +50,14 @@
                             طلب جديد <span id="new-count" class="badge-new" style="display:none">0</span>
                         </button>
                     </li>
-                    <li class="nav-item">
-                        <button class="nav-link" onclick="setFilter('processing')">قيد التجهيز</button>
-                    </li>
-                    <li class="nav-item">
-                        <button class="nav-link" onclick="setFilter('completed')">مكتملة ✅</button>
-                    </li>
+                    <li class="nav-item"><button class="nav-link" onclick="setFilter('processing')">قيد التجهيز</button></li>
+                    <li class="nav-item"><button class="nav-link" onclick="setFilter('completed')">مكتملة ✅</button></li>
                 </ul>
                 <div id="orders-list"></div>
             </div>
         </div>
     </div>
 
-    <!-- موديل التسعير المتطور -->
     <div class="modal fade" id="priceModal" tabindex="-1">
         <div class="modal-dialog modal-lg">
             <div class="modal-content">
@@ -74,30 +67,28 @@
                 </div>
                 <div class="modal-body">
                     <div class="row" id="product-buttons-container"></div>
-
-                    <!-- صندوق إدخال السعر -->
                     <div id="price-input-area" style="display: none;">
                         <div class="price-input-box">
                             <h6 id="current-product-name" class="fw-bold mb-3 text-dark"></h6>
                             <div class="mb-3">
                                 <label class="small fw-bold">سعر الشراء (🫳🏻)</label>
-                                <input type="number" id="buy-price" class="form-control" placeholder="أدخل سعر الشراء">
+                                <input type="number" id="buy-price" class="form-control" placeholder="سعر الشراء"
+                                       onkeydown="if(event.key==='Enter') document.getElementById('sell-price').focus()">
                             </div>
                             <div class="mb-3">
                                 <label class="small fw-bold">سعر البيع (🫴🏻)</label>
-                                <input type="number" id="sell-price" class="form-control" placeholder="أدخل سعر البيع">
+                                <input type="number" id="sell-price" class="form-control" placeholder="سعر البيع"
+                                       onkeydown="if(event.key==='Enter') saveProductPrice()">
                             </div>
                             <div class="d-flex gap-2">
                                 <button class="btn btn-success flex-grow-1 fw-bold" onclick="saveProductPrice()">حفظ السعر ✅</button>
-                                <button class="btn btn-secondary" onclick="hidePriceInput()">إلغاء ❌</button>
+                                <button class="btn btn-secondary" onclick="hidePriceInput()">إلغاء التعديل ❌</button>
                             </div>
                         </div>
                     </div>
-
-                    <!-- قسم اختيار عدد المحلات -->
                     <div id="finalize-area" style="display: none;">
                         <div class="finalize-box text-center">
-                            <h5 class="mb-3 text-success fw-bold">تم تسعير كافة المنتجات! ✨</h5>
+                            <h5 class="mb-3 text-success fw-bold">تم تسعير المنتجات! ✨</h5>
                             <label class="mb-2 d-block">اختر عدد المحلات (🏪):</label>
                             <div class="d-flex justify-content-center gap-2 flex-wrap mb-3">
                                 <button class="btn btn-outline-dark px-3" onclick="finishOrder(1)">1</button>
@@ -126,71 +117,46 @@
                 ordersData = await res.json();
                 renderList();
                 updateNewCount();
+                if(currentOrderId && document.getElementById('priceModal').classList.contains('show')) renderProducts();
             } catch (e) { console.error(e); }
         }
 
-        function setFilter(filter) {
-            currentFilter = filter;
-            document.querySelectorAll('#orderTabs .nav-link').forEach(btn => {
-                btn.classList.toggle('active', btn.getAttribute('onclick').includes(filter));
-            });
+        function setFilter(f) {
+            currentFilter = f;
+            document.querySelectorAll('#orderTabs .nav-link').forEach(btn => btn.classList.toggle('active', btn.getAttribute('onclick').includes(f)));
             renderList();
         }
 
         function updateNewCount() {
-            let count = 0;
-            for (const id in ordersData.orders) {
-                const order = ordersData.orders[id];
-                const pricing = ordersData.pricing[id] || {};
-                const priced = order.products.filter(p => pricing[p] && pricing[p].sell).length;
-                if (priced === 0 && order.places_count === 0) count++;
-            }
-            const badge = document.getElementById('new-count');
-            badge.innerText = count;
-            badge.style.display = count > 0 ? 'inline-block' : 'none';
+            let count = Object.values(ordersData.orders).filter(o => {
+                const priced = ordersData.pricing[o.id] ? Object.keys(ordersData.pricing[o.id]).filter(p => ordersData.pricing[o.id][p].sell).length : 0;
+                return priced === 0 && o.places_count === 0;
+            }).length;
+            const b = document.getElementById('new-count');
+            b.innerText = count; b.style.display = count > 0 ? 'inline-block' : 'none';
         }
 
         function renderList() {
-            const list = document.getElementById('orders-list');
-            list.innerHTML = '';
-
+            const list = document.getElementById('orders-list'); list.innerHTML = '';
             for (const id in ordersData.orders) {
-                const order = ordersData.orders[id];
-                const pricing = ordersData.pricing[id] || {};
+                const order = ordersData.orders[id]; const pricing = ordersData.pricing[id] || {};
                 const priced = order.products.filter(p => pricing[p] && pricing[p].sell).length;
-                const total = order.products.length;
                 const isFinalized = order.places_count > 0;
-
-                let state = '';
-                if (isFinalized) state = 'completed';
-                else if (priced === 0) state = 'new';
-                else state = 'processing';
-
+                let state = isFinalized ? 'completed' : (priced === 0 ? 'new' : 'processing');
                 if (state !== currentFilter) continue;
-
-                list.innerHTML += `
-                    <div class="card p-3 order-card" onclick="openPricing('${id}')">
-                        <div class="d-flex justify-content-between align-items-center">
-                            <h5>📍 ${order.title} <span class="badge bg-secondary badge-id">#${ordersData.invoice_numbers[id]}</span></h5>
-                            <span class="badge ${state==='completed'?'bg-success':(priced===total?'bg-info':'bg-warning text-dark')}">
-                                ${state==='completed'?'مكتمل ✅':(priced===total?'انتظار 🏪':`${priced}/${total}`)}
-                            </span>
-                        </div>
-                        <p class="text-muted small mb-0">📞 ${order.phone_number}</p>
-                    </div>
-                `;
-            }
-            if (list.innerHTML === '') {
-                list.innerHTML = '<div class="text-center p-4 text-muted">لا توجد طلبات هنا</div>';
+                list.innerHTML += `<div class="card p-3 order-card" onclick="openPricing('${id}')">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <h5>📍 ${order.title} <span class="badge bg-secondary badge-id">#${ordersData.invoice_numbers[id] || '??'}</span></h5>
+                        <span class="badge ${isFinalized?'bg-success':(priced===order.products.length?'bg-info':'bg-warning text-dark')}">
+                        ${isFinalized?'مكتمل':(priced===order.products.length?'انتظار 🏪':`${priced}/${order.products.length}`)}</span>
+                    </div><p class="text-muted small mb-0">📞 ${order.phone_number}</p></div>`;
             }
         }
 
         function openPricing(id) {
-            currentOrderId = id;
-            const order = ordersData.orders[id];
+            currentOrderId = id; const order = ordersData.orders[id];
             document.getElementById('modal-title').innerText = order.title;
-            renderProducts();
-            hidePriceInput();
+            renderProducts(); hidePriceInput();
             new bootstrap.Modal(document.getElementById('priceModal')).show();
         }
 
@@ -198,92 +164,52 @@
             const container = document.getElementById('product-buttons-container');
             const pricing = ordersData.pricing[currentOrderId] || {};
             const products = ordersData.orders[currentOrderId].products;
-
-            const sorted = [...products].sort((a,b) => {
-                const pA = pricing[a]?.sell ? 1 : 0;
-                const pB = pricing[b]?.sell ? 1 : 0;
-                return pB - pA;
-            });
-
+            const sorted = [...products].sort((a,b) => (pricing[b]?.sell?1:0) - (pricing[a]?.sell?1:0));
             container.innerHTML = '';
             sorted.forEach(p => {
-                const pData = pricing[p] || {};
-                const isPriced = pData.sell !== undefined;
-                container.innerHTML += `
-                    <div class="col-12 col-md-6">
-                        <button class="btn product-btn ${isPriced ? 'priced' : 'pending'}" onclick="startPricing('${p}')">
-                            ${p} ${isPriced ? `<span class="float-start small opacity-75">(💰 ${pData.buy}/${pData.sell})</span>` : ''}
-                        </button>
-                    </div>
-                `;
+                const isPriced = pricing[p]?.sell !== undefined;
+                container.innerHTML += `<div class="col-12 col-md-6 mb-2"><button class="btn product-btn ${isPriced?'priced':'pending'}" onclick="startPricing('${p}')">
+                    ${p} ${isPriced?`<span class="float-start small opacity-75">💰 ${pricing[p].buy}/${pricing[p].sell}</span>`:''}</button></div>`;
             });
             checkDone();
         }
 
         function startPricing(p) {
-            currentProduct = p;
-            const pData = ordersData.pricing[currentOrderId][p] || {};
+            currentProduct = p; const pData = (ordersData.pricing[currentOrderId] || {})[p] || {};
             document.getElementById('current-product-name').innerText = `تسعير: ${p}`;
             document.getElementById('buy-price').value = pData.buy || '';
             document.getElementById('sell-price').value = pData.sell || '';
             document.getElementById('price-input-area').style.display = 'block';
             document.getElementById('finalize-area').style.display = 'none';
+            setTimeout(() => document.getElementById('buy-price').focus(), 300);
         }
 
         async function saveProductPrice() {
-            const buy = document.getElementById('buy-price').value;
-            const sell = document.getElementById('sell-price').value;
-            if(!buy || !sell) return alert("أدخل السعرين!");
-
-            await fetch('/api/update_price', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({order_id: currentOrderId, product: currentProduct, buy, sell})
-            });
-
-            ordersData.pricing[currentOrderId][currentProduct] = {buy, sell};
-            hidePriceInput();
-            renderProducts();
-            refresh();
+            const b = document.getElementById('buy-price').value; const s = document.getElementById('sell-price').value;
+            if(!b || !s) return;
+            await fetch('/api/update_price', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({order_id: currentOrderId, product: currentProduct, buy: b, sell: s})});
+            if(!ordersData.pricing[currentOrderId]) ordersData.pricing[currentOrderId] = {};
+            ordersData.pricing[currentOrderId][currentProduct] = {buy: b, sell: s};
+            hidePriceInput(); renderProducts(); refresh();
         }
 
-        function hidePriceInput() {
-            document.getElementById('price-input-area').style.display = 'none';
-        }
-
+        function hidePriceInput() { document.getElementById('price-input-area').style.display = 'none'; }
         function checkDone() {
-            const order = ordersData.orders[currentOrderId];
-            const pricing = ordersData.pricing[currentOrderId] || {};
+            const order = ordersData.orders[currentOrderId]; const pricing = ordersData.pricing[currentOrderId] || {};
             const isDone = order.products.every(p => pricing[p] && pricing[p].sell);
             document.getElementById('finalize-area').style.display = isDone ? 'block' : 'none';
         }
-
-        async function finishOrder(count) {
-            await fetch('/api/finalize', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({order_id: currentOrderId, places_count: count})
-            });
-            bootstrap.Modal.getInstance(document.getElementById('priceModal')).hide();
-            refresh();
+        async function finishOrder(c) {
+            await fetch('/api/finalize', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({order_id: currentOrderId, places_count: c})});
+            bootstrap.Modal.getInstance(document.getElementById('priceModal')).hide(); refresh();
         }
-
-        async function resetAll() {
-            if(confirm('تصفير كل البيانات؟')) { await fetch('/api/reset', {method: 'POST'}); refresh(); }
-        }
-
+        async function resetAll() { if(confirm('تصفير البيانات؟')) { await fetch('/api/reset', {method: 'POST'}); refresh(); } }
         document.getElementById('bulk-order-form').onsubmit = async (e) => {
             e.preventDefault();
-            const res = await fetch('/api/add_order', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({raw_text: document.getElementById('raw_text').value})
-            });
-            if(res.ok) { document.getElementById('raw_text').value = ''; refresh(); }
+            await fetch('/api/add_order', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({raw_text: document.getElementById('raw_text').value})});
+            document.getElementById('raw_text').value = ''; refresh();
         };
-
-        refresh();
-        setInterval(refresh, 10000);
+        refresh(); setInterval(refresh, 10000);
     </script>
 </body>
 </html>
