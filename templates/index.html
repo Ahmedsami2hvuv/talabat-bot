@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>لوحة تحكم أبو الأكبر 🚀</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body { background-color: #f0f2f5; font-family: 'Tajawal', sans-serif; }
+        .navbar { background: linear-gradient(90deg, #212529 0%, #343a40 100%); box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
+        .card { border: none; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); margin-bottom: 20px; }
+        .price-badge { background-color: #e9ecef; padding: 5px 10px; border-radius: 8px; font-weight: bold; }
+        .order-id { font-size: 0.8rem; color: #6c757d; }
+        .finalize-section { background-color: #fff3cd; padding: 15px; border-radius: 10px; }
+        .modal-header { background-color: #ffc107; }
+    </style>
+</head>
+<body>
+    <nav class="navbar navbar-dark mb-4">
+        <div class="container">
+            <span class="navbar-brand mb-0 h1 text-warning">🚀 لوحة تحكم أبو الأكبر المتكاملة</span>
+            <button class="btn btn-outline-danger btn-sm" onclick="resetAll()">تصفير البيانات 🗑️</button>
+        </div>
+    </nav>
+
+    <div class="container">
+        <div class="row">
+            <!-- إضافة طلب -->
+            <div class="col-md-4">
+                <div class="card p-3">
+                    <h5 class="card-title border-bottom pb-2">📝 إضافة طلب جديد</h5>
+                    <form id="add-order-form">
+                        <div class="mb-2"><label class="form-label">المنطقة</label><input type="text" id="title" class="form-control" required></div>
+                        <div class="mb-2"><label class="form-label">رقم الهاتف</label><input type="text" id="phone" class="form-control" required></div>
+                        <div class="mb-2"><label class="form-label">المنتجات (كل منتج في سطر)</label><textarea id="products" class="form-control" rows="3" required></textarea></div>
+                        <button type="submit" class="btn btn-warning w-100 mt-2">إرسال الطلب 📤</button>
+                    </form>
+                </div>
+                <div class="card p-3">
+                    <h5 class="card-title">📊 إحصائيات سريعة</h5>
+                    <p id="stats">جاري التحميل...</p>
+                </div>
+            </div>
+
+            <!-- قائمة الطلبات -->
+            <div class="col-md-8">
+                <h5 class="mb-3">📋 الطلبات النشطة</h5>
+                <div id="orders-list"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- موديل التسعير (Pricing Modal) -->
+    <div class="modal fade" id="priceModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header"><h5 class="modal-title">💰 تسعير الطلب: <span id="modal-title"></span></h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+                <div class="modal-body">
+                    <div id="product-pricing-list"></div>
+                    <hr>
+                    <div class="finalize-section">
+                        <label>كم عدد المحلات؟ (🏪)</label>
+                        <select id="places-count" class="form-select mb-3">
+                            <option value="1">1 محلات</option><option value="2">2 محلات</option>
+                            <option value="3">3 محلات (أجرة +1)</option><option value="4">4 محلات (أجرة +2)</option>
+                            <option value="5">5 محلات (أجرة +3)</option>
+                        </select>
+                        <button class="btn btn-success w-100" onclick="finalizeOrder()">إنهاء الطلب وتوليد الفاتورة ✅</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        let currentOrderId = '';
+        let ordersData = {};
+
+        async function fetchAll() {
+            const res = await fetch('/api/orders');
+            ordersData = await res.json();
+            const list = document.getElementById('orders-list');
+            list.innerHTML = '';
+
+            for (const id in ordersData.orders) {
+                const order = ordersData.orders[id];
+                const pricing = ordersData.pricing[id] || {};
+                const inv = ordersData.invoice_numbers[id];
+
+                list.innerHTML += `
+                    <div class="card p-3">
+                        <div class="d-flex justify-content-between">
+                            <h5>📍 ${order.title} <span class="order-id">#${inv}</span></h5>
+                            <button class="btn btn-sm btn-primary" onclick="openPricing('${id}')">تسعير / تعديل 💸</button>
+                        </div>
+                        <p class="mb-1">📞 ${order.phone_number}</p>
+                        <div class="mt-2">
+                            ${order.products.map(p => {
+                                const pData = pricing[p] || {};
+                                return `<span class="badge bg-light text-dark border me-1">${p} ${pData.sell ? `(${pData.sell})` : '❌'}</span>`;
+                            }).join('')}
+                        </div>
+                    </div>
+                `;
+            }
+        }
+
+        function openPricing(id) {
+            currentOrderId = id;
+            const order = ordersData.orders[id];
+            const pricing = ordersData.pricing[id];
+            document.getElementById('modal-title').innerText = order.title;
+            const container = document.getElementById('product-pricing-list');
+            container.innerHTML = '';
+
+            order.products.forEach(p => {
+                const pData = pricing[p] || {buy: '', sell: ''};
+                container.innerHTML += `
+                    <div class="mb-3 p-2 border rounded bg-light">
+                        <strong>${p}</strong>
+                        <div class="row g-2 mt-1">
+                            <div class="col-6"><input type="number" class="form-control form-control-sm" placeholder="سعر الشراء" id="buy-${p}" value="${pData.buy}"></div>
+                            <div class="col-6"><input type="number" class="form-control form-control-sm" placeholder="سعر البيع" id="sell-${p}" value="${pData.sell}"></div>
+                        </div>
+                        <button class="btn btn-warning btn-sm w-100 mt-2" onclick="savePrice('${p}')">حفظ السعر ✅</button>
+                    </div>
+                `;
+            });
+            new bootstrap.Modal(document.getElementById('priceModal')).show();
+        }
+
+        async function savePrice(product) {
+            const buy = document.getElementById(`buy-${product}`).value;
+            const sell = document.getElementById(`sell-${product}`).value;
+            await fetch('/api/update_price', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({order_id: currentOrderId, product, buy, sell})
+            });
+            fetchAll();
+        }
+
+        async function finalizeOrder() {
+            const places = document.getElementById('places-count').value;
+            await fetch('/api/finalize', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({order_id: currentOrderId, places_count: places})
+            });
+            alert('تم إنهاء الطلب بنجاح! الفاتورة جاهزة في التليكرام (إن كان يعمل) أو يمكنك نسخها من لوحة الإدارة.');
+            fetchAll();
+        }
+
+        async function resetAll() {
+            if(confirm('هل أنت متأكد من مسح جميع بيانات اليوم؟')) {
+                await fetch('/api/reset', {method: 'POST'});
+                fetchAll();
+            }
+        }
+
+        document.getElementById('add-order-form').onsubmit = async (e) => {
+            e.preventDefault();
+            const data = {
+                title: document.getElementById('title').value,
+                phone: document.getElementById('phone').value,
+                products: document.getElementById('products').value.split('\n').filter(p => p.trim())
+            };
+            await fetch('/api/add_order', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(data)});
+            document.getElementById('add-order-form').reset();
+            fetchAll();
+        };
+
+        fetchAll();
+        setInterval(fetchAll, 10000);
+    </script>
+</body>
+</html>
