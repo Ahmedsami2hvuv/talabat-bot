@@ -140,7 +140,18 @@ def index(): return render_template('index.html')
 @app.route('/api/orders')
 def get_orders():
     o, p, inv = fetch_all_data_db()
-    return jsonify({"orders": o, "pricing": p, "invoice_numbers": inv})
+    from features.product_categories import is_meat, is_fish, is_vegetable_fruit
+    categories = {}
+    for oid, order in o.items():
+        categories[oid] = {}
+        for prod in order['products']:
+             cat = "unknown"
+             if is_meat(prod): cat = "meat"
+             elif is_fish(prod): cat = "fish"
+             elif is_vegetable_fruit(prod): cat = "veg"
+             categories[oid][prod] = cat
+             
+    return jsonify({"orders": o, "pricing": p, "invoice_numbers": inv, "categories": categories})
 
 @app.route('/api/add_order', methods=['POST'])
 def add_order():
@@ -176,6 +187,17 @@ def add_order():
     if conn:
         with conn.cursor() as cur:
             cur.execute("INSERT INTO orders (id, title, phone_number, products) VALUES (%s, %s, %s, %s)", (oid, title, phone, products))
+            
+            # محاولة التسعير التلقائي للحوم
+            from features.fixed_prices import suggest_fixed_prices
+            for prod in products:
+                fixed = suggest_fixed_prices(prod)
+                if fixed:
+                    cur.execute("""
+                        INSERT INTO pricing (order_id, product, buy, sell, prepared_by)
+                        VALUES (%s, %s, %s, %s, 'نظام ذكي')
+                    """, (oid, prod, fixed['buy_total'], fixed['sell_total']))
+                    
         conn.commit()
         conn.close()
     return jsonify({"status": "success"})

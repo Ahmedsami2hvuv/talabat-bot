@@ -221,8 +221,14 @@
             container.innerHTML = '';
             sorted.forEach(p => {
                 const isPriced = pricing[p]?.sell !== undefined;
+                const cat = (ordersData.categories?.[currentOrderId] || {})[p] || 'unknown';
+                let icon = '';
+                if(cat === 'meat') icon = '🥩 ';
+                if(cat === 'fish') icon = '🐟 ';
+                if(cat === 'veg') icon = '🥦 ';
+                
                 container.innerHTML += `<div class="col-12 col-md-6 mb-2"><button class="btn product-btn ${isPriced?'priced':'pending'}" onclick="startPricing('${p}')">
-                    ${p} ${isPriced?`<span class="float-start small opacity-75">💰 ${pricing[p].buy}/${pricing[p].sell}</span>`:''}</button></div>`;
+                    ${icon}${p} ${isPriced?`<span class="float-start small opacity-75">💰 ${pricing[p].buy}/${pricing[p].sell}</span>`:''}</button></div>`;
             });
             checkDone();
         }
