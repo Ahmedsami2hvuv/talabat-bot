@@ -180,7 +180,31 @@
         function openPricing(id) {
             currentOrderId = id; const order = ordersData.orders[id];
             document.getElementById('modal-title').innerText = order.title;
-            renderProducts(); hidePriceInput();
+            const isFinalized = order.places_count > 0;
+            
+            if(isFinalized) {
+               document.getElementById('product-buttons-container').style.display = 'none';
+               document.getElementById('price-input-area').style.display = 'none';
+               document.getElementById('finalize-area').style.display = 'none';
+               
+               if (!document.getElementById('invoice-area')) {
+                   const invDiv = document.createElement('div');
+                   invDiv.id = 'invoice-area';
+                   document.querySelector('#priceModal .modal-body').appendChild(invDiv);
+               }
+               document.getElementById('invoice-area').style.display = 'block';
+               document.getElementById('invoice-area').innerHTML = '<div class="text-center w-100 fw-bold">جاري تحميل الفاتورة...⏳</div>';
+               
+               fetch('/api/get_invoice/' + id).then(r=>r.json()).then(data => {
+                   document.getElementById('invoice-area').innerHTML = `<div class="bg-light p-3 rounded border" style="white-space: pre-wrap; font-family: monospace; text-align: right;" dir="rtl">${data.invoice_text}</div>
+                   <button class="btn btn-success mt-3 w-100 fw-bold" onclick="navigator.clipboard.writeText(document.querySelector('#invoice-area .bg-light').innerText); alert('تم نسخ الفاتورة بنجاح! ✅')">نسخ الفاتورة 📋</button>`;
+               });
+               
+            } else {
+               if(document.getElementById('invoice-area')) document.getElementById('invoice-area').style.display = 'none';
+               document.getElementById('product-buttons-container').style.display = 'flex';
+               renderProducts(); hidePriceInput();
+            }
             new bootstrap.Modal(document.getElementById('priceModal')).show();
         }
 
@@ -211,10 +235,14 @@
         async function saveProductPrice() {
             const b = document.getElementById('buy-price').value; const s = document.getElementById('sell-price').value;
             if(!b || !s) return;
+            document.getElementById('buy-price').disabled = true;
+            document.getElementById('sell-price').disabled = true;
             await fetch('/api/update_price', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({order_id: currentOrderId, product: currentProduct, buy: b, sell: s})});
             if(!ordersData.pricing[currentOrderId]) ordersData.pricing[currentOrderId] = {};
             ordersData.pricing[currentOrderId][currentProduct] = {buy: b, sell: s};
-            hidePriceInput(); renderProducts(); refresh();
+            document.getElementById('buy-price').disabled = false;
+            document.getElementById('sell-price').disabled = false;
+            hidePriceInput(); renderProducts(); renderList(); updateNewCount();
         }
 
         function hidePriceInput() { document.getElementById('price-input-area').style.display = 'none'; }

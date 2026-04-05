@@ -91,6 +91,7 @@ def parse_bulk_order(raw_text):
         line_clean = re.sub(r"\D", "", line)
         # إذا السطر يحتوي على الرقم، نتجاهله ولا نعتبره منتجاً
         if clean_phone and clean_phone in line_clean and len(line_clean) >= 9: continue
+        if title and title == line: continue
         if zone and zone in line: continue
         if len(line) < 2: continue
         products.append(line)
@@ -205,6 +206,67 @@ def finalize():
         conn.commit()
         conn.close()
     return jsonify({"status": "success"})
+
+@app.route('/api/get_invoice/<oid>')
+def get_invoice(oid):
+    o, p, inv = fetch_all_data_db()
+    if oid not in o:
+        return jsonify({"error": "Order not found"})
+    order = o[oid]
+    pricing = p.get(oid, {})
+    invoice_num = inv.get(oid, "??")
+    
+    title = order['title']
+    phone = order['phone_number']
+    places_count = order['places_count']
+    products = order['products']
+    
+    from features.delivery_zones import get_delivery_price
+    del_price = get_delivery_price(title)
+    
+    prep_fee = 0
+    if places_count == 2: prep_fee = 1
+    elif places_count == 3: prep_fee = 2
+    elif places_count >= 4: prep_fee = 3
+    
+    text = f"📋 أبو الأكبر للتوصيل 🚀\n-----------------------------------\n 🔢: #{invoice_num}\n🏠  : {title}\n📞   : {phone}\n\nتفاصيل الطلب :  "
+    
+    total = 0
+    for prod in products:
+        pData = pricing.get(prod)
+        if pData and pData.get('sell'):
+            sell = float(pData['sell'])
+            sell_str = int(sell) if sell.is_integer() else sell
+            old_total = total
+            total += sell
+            text += f"\n\n– {prod} بـ{sell_str}"
+            if old_total == 0:
+                text += f"\n• {int(total) if float(total).is_integer() else total} 💵"
+            else:
+                old_str = int(old_total) if float(old_total).is_integer() else old_total
+                tot_str = int(total) if float(total).is_integer() else total
+                text += f"\n• {old_str}+{sell_str}= {tot_str} 💵"
+        else:
+            text += f"\n\n– {prod} (بدون سعر)"
+                
+    if prep_fee > 0:
+        old_total = total
+        total += prep_fee
+        old_str = int(old_total) if float(old_total).is_integer() else old_total
+        tot_str = int(total) if float(total).is_integer() else total
+        text += f"\n\n– 📦 التجهيز: من {places_count} محلات بـ {prep_fee}"
+        text += f"\n• {old_str}+{prep_fee}= {tot_str} 💵"
+        
+    old_total = total
+    total += del_price
+    old_str = int(old_total) if float(old_total).is_integer() else old_total
+    tot_str = int(total) if float(total).is_integer() else total
+    text += f"\n\n– 🚚 : بـ {int(del_price) if float(del_price).is_integer() else del_price}"
+    text += f"\n• {old_str}+{int(del_price) if float(del_price).is_integer() else del_price}= {tot_str} 💵"
+    
+    text += f"\n-----------------------------------\n✨ المجموع الكلي: ✨\nبدون التوصيل = {int(old_total) if float(old_total).is_integer() else old_total} 💵\nمــــع التوصيل = {tot_str} 💵\nشكراً لاختياركم أبو الأكبر للتوصيل! ❤️"
+    
+    return jsonify({"invoice_text": text})
 
 @app.route('/api/reset', methods=['POST'])
 def reset_data():
