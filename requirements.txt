@@ -2,3 +2,4 @@ python-telegram-bot[job-queue]==20.8
 requests
 flask
 flask-cors
+psycopg2-binary
