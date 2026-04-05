@@ -141,9 +141,15 @@ def index(): return render_template('index.html')
 def get_orders():
     o, p, inv = fetch_all_data_db()
     from features.product_categories import is_meat, is_fish, is_vegetable_fruit
+    from features.fixed_prices import suggest_fixed_prices
+    
     categories = {}
+    suggested_pricing = {}
+    
     for oid, order in o.items():
         categories[oid] = {}
+        suggested_pricing[oid] = {}
+        
         for prod in order['products']:
              cat = "unknown"
              if is_meat(prod): cat = "meat"
@@ -151,7 +157,11 @@ def get_orders():
              elif is_vegetable_fruit(prod): cat = "veg"
              categories[oid][prod] = cat
              
-    return jsonify({"orders": o, "pricing": p, "invoice_numbers": inv, "categories": categories})
+             fixed = suggest_fixed_prices(prod)
+             if fixed:
+                 suggested_pricing[oid][prod] = {"buy": fixed['buy_total'], "sell": fixed['sell_total']}
+             
+    return jsonify({"orders": o, "pricing": p, "invoice_numbers": inv, "categories": categories, "suggested_pricing": suggested_pricing})
 
 @app.route('/api/add_order', methods=['POST'])
 def add_order():
@@ -187,17 +197,6 @@ def add_order():
     if conn:
         with conn.cursor() as cur:
             cur.execute("INSERT INTO orders (id, title, phone_number, products) VALUES (%s, %s, %s, %s)", (oid, title, phone, products))
-            
-            # محاولة التسعير التلقائي للحوم
-            from features.fixed_prices import suggest_fixed_prices
-            for prod in products:
-                fixed = suggest_fixed_prices(prod)
-                if fixed:
-                    cur.execute("""
-                        INSERT INTO pricing (order_id, product, buy, sell, prepared_by)
-                        VALUES (%s, %s, %s, %s, 'نظام ذكي')
-                    """, (oid, prod, fixed['buy_total'], fixed['sell_total']))
-                    
         conn.commit()
         conn.close()
     return jsonify({"status": "success"})

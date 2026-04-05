@@ -235,9 +235,11 @@
 
         function startPricing(p) {
             currentProduct = p; const pData = (ordersData.pricing[currentOrderId] || {})[p] || {};
+            const suggested = (ordersData.suggested_pricing?.[currentOrderId] || {})[p];
+            
             document.getElementById('current-product-name').innerText = `تسعير: ${p}`;
-            document.getElementById('buy-price').value = pData.buy || '';
-            document.getElementById('sell-price').value = pData.sell || '';
+            document.getElementById('buy-price').value = pData.buy || (suggested ? suggested.buy : '');
+            document.getElementById('sell-price').value = pData.sell || (suggested ? suggested.sell : '');
             document.getElementById('price-input-area').style.display = 'block';
             document.getElementById('finalize-area').style.display = 'none';
             setTimeout(() => document.getElementById('buy-price').focus(), 300);
