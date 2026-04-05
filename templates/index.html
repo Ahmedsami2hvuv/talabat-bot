@@ -18,6 +18,9 @@
         .price-input-box { background: #fff3cd; padding: 15px; border-radius: 10px; margin-top: 10px; border: 1px solid #ffeeba; }
         .finalize-box { background: #d4edda; padding: 20px; border-radius: 12px; margin-top: 20px; border: 1px solid #c3e6cb; }
         .badge-id { font-size: 0.7rem; vertical-align: middle; }
+        .nav-pills .nav-link { border-radius: 20px; font-weight: bold; color: #555; margin: 0 5px; border: 1px solid #ddd; }
+        .nav-pills .nav-link.active { background-color: #ffc107; color: #000; border-color: #ffc107; }
+        .badge-new { background-color: #dc3545; color: white; border-radius: 50%; padding: 2px 8px; font-size: 0.8rem; font-weight: bold; margin-right: 5px; }
     </style>
 </head>
 <body>
@@ -41,9 +44,21 @@
                 </div>
             </div>
 
-            <!-- قائمة الطلبات -->
+            <!-- قائمة الطلبات المقسمة -->
             <div class="col-md-7">
-                <h5 class="mb-3">📋 الطلبات النشطة (اضغط للبدء)</h5>
+                <ul class="nav nav-pills mb-3 justify-content-center" id="orderTabs">
+                    <li class="nav-item">
+                        <button class="nav-link active" onclick="setFilter('new')">
+                            طلب جديد <span id="new-count" class="badge-new" style="display:none">0</span>
+                        </button>
+                    </li>
+                    <li class="nav-item">
+                        <button class="nav-link" onclick="setFilter('processing')">قيد التجهيز</button>
+                    </li>
+                    <li class="nav-item">
+                        <button class="nav-link" onclick="setFilter('completed')">مكتملة ✅</button>
+                    </li>
+                </ul>
                 <div id="orders-list"></div>
             </div>
         </div>
@@ -103,31 +118,70 @@
         let currentOrderId = '';
         let currentProduct = '';
         let ordersData = {};
+        let currentFilter = 'new';
 
         async function refresh() {
-            const res = await fetch('/api/orders');
-            ordersData = await res.json();
+            try {
+                const res = await fetch('/api/orders');
+                ordersData = await res.json();
+                renderList();
+                updateNewCount();
+            } catch (e) { console.error(e); }
+        }
+
+        function setFilter(filter) {
+            currentFilter = filter;
+            document.querySelectorAll('#orderTabs .nav-link').forEach(btn => {
+                btn.classList.toggle('active', btn.getAttribute('onclick').includes(filter));
+            });
             renderList();
+        }
+
+        function updateNewCount() {
+            let count = 0;
+            for (const id in ordersData.orders) {
+                const order = ordersData.orders[id];
+                const pricing = ordersData.pricing[id] || {};
+                const priced = order.products.filter(p => pricing[p] && pricing[p].sell).length;
+                if (priced === 0 && order.places_count === 0) count++;
+            }
+            const badge = document.getElementById('new-count');
+            badge.innerText = count;
+            badge.style.display = count > 0 ? 'inline-block' : 'none';
         }
 
         function renderList() {
             const list = document.getElementById('orders-list');
             list.innerHTML = '';
+
             for (const id in ordersData.orders) {
                 const order = ordersData.orders[id];
                 const pricing = ordersData.pricing[id] || {};
                 const priced = order.products.filter(p => pricing[p] && pricing[p].sell).length;
-                const isDone = priced === order.products.length && order.products.length > 0;
+                const total = order.products.length;
+                const isFinalized = order.places_count > 0;
+
+                let state = '';
+                if (isFinalized) state = 'completed';
+                else if (priced === 0) state = 'new';
+                else state = 'processing';
+
+                if (state !== currentFilter) continue;
 
                 list.innerHTML += `
                     <div class="card p-3 order-card" onclick="openPricing('${id}')">
                         <div class="d-flex justify-content-between align-items-center">
                             <h5>📍 ${order.title} <span class="badge bg-secondary badge-id">#${ordersData.invoice_numbers[id]}</span></h5>
-                            <span class="badge ${isDone ? 'bg-success' : 'bg-warning text-dark'}">${priced}/${order.products.length}</span>
+                            <span class="badge ${state==='completed'?'bg-success':(priced===total?'bg-info':'bg-warning text-dark')}">
+                                ${state==='completed'?'مكتمل ✅':(priced===total?'انتظار 🏪':`${priced}/${total}`)}
+                            </span>
                         </div>
-                        <p class="text-muted small mb-1">📞 ${order.phone_number}</p>
+                        <p class="text-muted small mb-0">📞 ${order.phone_number}</p>
                     </div>
                 `;
+            }
+            if (list.innerHTML === '') {
+                list.innerHTML = '<div class="text-center p-4 text-muted">لا توجد طلبات هنا</div>';
             }
         }
 
@@ -145,7 +199,6 @@
             const pricing = ordersData.pricing[currentOrderId] || {};
             const products = ordersData.orders[currentOrderId].products;
 
-            // ترتيب: المسعر فوق (أخضر)
             const sorted = [...products].sort((a,b) => {
                 const pA = pricing[a]?.sell ? 1 : 0;
                 const pB = pricing[b]?.sell ? 1 : 0;
@@ -230,6 +283,7 @@
         };
 
         refresh();
+        setInterval(refresh, 10000);
     </script>
 </body>
 </html>
