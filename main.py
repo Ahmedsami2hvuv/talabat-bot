@@ -145,9 +145,32 @@ def get_orders():
 def add_order():
     data = request.json
     raw_text = data.get('raw_text', '')
+    confirmed_zone = data.get('confirmed_zone')
     title, phone, products = parse_bulk_order(raw_text)
-    oid = str(uuid.uuid4())[:8]
+    
+    if not confirmed_zone:
+        from features.delivery_zones import get_matching_zone_name, get_all_close_zones_from_words, get_closest_zone_names
+        matched_zone = get_matching_zone_name(raw_text)
+        if not matched_zone:
+            suggestions = get_all_close_zones_from_words(raw_text, per_word_n=2, cutoff=0.35)
+            if not suggestions and title and title != "عنوان غير معروف":
+                try:
+                    suggestions = get_closest_zone_names(title, n=6, cutoff=0.2)
+                except Exception:
+                    pass
+            unique_suggestions = list(dict.fromkeys(suggestions))[:6]
+            return jsonify({
+                "status": "needs_zone",
+                "suggestions": unique_suggestions,
+                "parsed_data": {
+                    "fallback_title": title
+                }
+            })
+        title = matched_zone
+    else:
+        title = confirmed_zone
 
+    oid = str(uuid.uuid4())[:8]
     conn = get_db_connection()
     if conn:
         with conn.cursor() as cur:

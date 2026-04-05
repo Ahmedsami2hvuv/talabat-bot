@@ -104,8 +104,32 @@
         </div>
     </div>
 
+    <div class="modal fade" id="zoneModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header bg-primary text-white">
+                    <h5 class="modal-title">📍 تحديد المنطقة بوضوح</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <p class="text-muted font-weight-bold mb-3">لم نتمكن من التعرف على المنطقة تلقائياً بشكل دقيق. يرجى اختيار منطقة من الاقتراحات أدناه أو كتابتها يدوياً:</p>
+                    <div id="zone-suggestions" class="d-flex flex-wrap gap-2 mb-3"></div>
+                    <div class="form-group border-top pt-3">
+                        <label class="fw-bold mb-2">إدخال يدوي / تعديل الاسم:</label>
+                        <input type="text" id="manual-zone-input" class="form-control text-center fw-bold" placeholder="اكتب اسم المنطقة هنا...">
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">إلغاء ❌</button>
+                    <button type="button" class="btn btn-success fw-bold px-4" onclick="submitConfirmedZone()">تأكيد وإضافة الطلب ✅</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <script>
+        let pendingOrderText = '';
         let currentOrderId = '';
         let currentProduct = '';
         let ordersData = {};
@@ -206,9 +230,52 @@
         async function resetAll() { if(confirm('تصفير البيانات؟')) { await fetch('/api/reset', {method: 'POST'}); refresh(); } }
         document.getElementById('bulk-order-form').onsubmit = async (e) => {
             e.preventDefault();
-            await fetch('/api/add_order', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({raw_text: document.getElementById('raw_text').value})});
-            document.getElementById('raw_text').value = ''; refresh();
+            pendingOrderText = document.getElementById('raw_text').value;
+            const res = await fetch('/api/add_order', {
+                method: 'POST', 
+                headers: {'Content-Type': 'application/json'}, 
+                body: JSON.stringify({raw_text: pendingOrderText})
+            });
+            const data = await res.json();
+            if (data.status === 'success') {
+                document.getElementById('raw_text').value = ''; 
+                refresh();
+            } else if (data.status === 'needs_zone') {
+                const suggContainer = document.getElementById('zone-suggestions');
+                suggContainer.innerHTML = '';
+                if (data.suggestions && data.suggestions.length > 0) {
+                    data.suggestions.forEach(z => {
+                        suggContainer.innerHTML += `<button type="button" class="btn btn-outline-primary m-1 btn-sm fw-bold" onclick="selectZone('${z.replace(/'/g, "\\'")}')">${z}</button>`;
+                    });
+                } else {
+                    suggContainer.innerHTML = '<span class="text-muted small">لا توجد مناطق مشابهة. يرجى إدخال اسم المنطقة يدوياً.</span>';
+                }
+                const fallback = data.parsed_data.fallback_title;
+                document.getElementById('manual-zone-input').value = (fallback && fallback !== "عنوان غير معروف") ? fallback : "";
+                new bootstrap.Modal(document.getElementById('zoneModal')).show();
+            }
         };
+
+        function selectZone(z) {
+            document.getElementById('manual-zone-input').value = z;
+        }
+
+        async function submitConfirmedZone() {
+            const finalZone = document.getElementById('manual-zone-input').value.trim();
+            if (!finalZone) { alert('الرجاء اختيار منطقة من الاقتراحات أو كتابة اسم المنطقة بشكل صحيح!'); return; }
+            
+            const res = await fetch('/api/add_order', {
+                method: 'POST', 
+                headers: {'Content-Type': 'application/json'}, 
+                body: JSON.stringify({raw_text: pendingOrderText, confirmed_zone: finalZone})
+            });
+            const data = await res.json();
+            if (data.status === 'success') {
+                bootstrap.Modal.getInstance(document.getElementById('zoneModal')).hide();
+                document.getElementById('raw_text').value = ''; 
+                refresh();
+            }
+        }
         refresh(); setInterval(refresh, 10000);
     </script>
 </body>
