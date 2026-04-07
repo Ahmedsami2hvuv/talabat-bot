@@ -41,6 +41,7 @@ def init_db():
                     phone_number TEXT,
                     products TEXT[],
                     places_count INTEGER DEFAULT 0,
+                    assigned_to TEXT,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             """)
@@ -57,6 +58,13 @@ def init_db():
             cur.execute("CREATE TABLE IF NOT EXISTS invoice_counter (count INTEGER)")
             cur.execute("SELECT count FROM invoice_counter")
             if not cur.fetchone(): cur.execute("INSERT INTO invoice_counter VALUES (1)")
+
+            # تحديث الجدول في حال كان موجوداً مسبقاً لإضافة العمود الجديد
+            try:
+                cur.execute("ALTER TABLE orders ADD COLUMN IF NOT EXISTS assigned_to TEXT")
+            except:
+                pass
+
         conn.commit()
         conn.close()
         logger.info("Database initialized successfully.")
@@ -116,6 +124,7 @@ def fetch_all_data_db():
                 "phone_number": r['phone_number'],
                 "products": r['products'],
                 "places_count": r['places_count'],
+                "assigned_to": r.get('assigned_to'),
                 "created_at": r['created_at'].isoformat()
             }
             invoice_dict[oid] = i + 1
@@ -168,6 +177,7 @@ def add_order():
     data = request.json
     raw_text = data.get('raw_text', '')
     confirmed_zone = data.get('confirmed_zone')
+    assigned_to = data.get('assigned_to')
     title, phone, products = parse_bulk_order(raw_text)
     
     if not confirmed_zone:
@@ -196,7 +206,8 @@ def add_order():
     conn = get_db_connection()
     if conn:
         with conn.cursor() as cur:
-            cur.execute("INSERT INTO orders (id, title, phone_number, products) VALUES (%s, %s, %s, %s)", (oid, title, phone, products))
+            cur.execute("INSERT INTO orders (id, title, phone_number, products, assigned_to) VALUES (%s, %s, %s, %s, %s)",
+                        (oid, title, phone, products, assigned_to))
         conn.commit()
         conn.close()
     return jsonify({"status": "success"})

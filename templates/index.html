@@ -21,6 +21,8 @@
         .nav-pills .nav-link { border-radius: 20px; font-weight: bold; color: #555; margin: 0 5px; border: 1px solid #ddd; }
         .nav-pills .nav-link.active { background-color: #ffc107; color: #000; border-color: #ffc107; }
         .badge-new { background-color: #dc3545; color: white; border-radius: 50%; padding: 2px 8px; font-size: 0.8rem; font-weight: bold; margin-right: 5px; }
+        .admin-btn { background-color: #d63384; color: white !important; border-color: #d63384; }
+        .admin-btn:hover { background-color: #b02a6b; }
     </style>
 </head>
 <body>
@@ -46,14 +48,51 @@
             <div class="col-md-7">
                 <ul class="nav nav-pills mb-3 justify-content-center" id="orderTabs">
                     <li class="nav-item">
-                        <button class="nav-link active" onclick="setFilter('new')">
-                            طلب جديد <span id="new-count" class="badge-new" style="display:none">0</span>
+                        <button class="nav-link admin-btn" data-bs-toggle="modal" data-bs-target="#adminOrderModal">
+                            ➕ طلب إداري جديد
                         </button>
                     </li>
-                    <li class="nav-item"><button class="nav-link" onclick="setFilter('processing')">قيد التجهيز</button></li>
-                    <li class="nav-item"><button class="nav-link" onclick="setFilter('completed')">مكتملة ✅</button></li>
+                    <li class="nav-item">
+                        <button class="nav-link active" id="tab-new" onclick="setFilter('new')">
+                            الطلبات الجديدة <span id="new-count" class="badge-new" style="display:none">0</span>
+                        </button>
+                    </li>
+                    <li class="nav-item"><button class="nav-link" onclick="setFilter('processing')">قيد التجهيز (Drafts)</button></li>
+                    <li class="nav-item"><button class="nav-link" onclick="setFilter('completed')">مكتمل التجهيز ✅</button></li>
                 </ul>
                 <div id="orders-list"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal: طلب إداري جديد -->
+    <div class="modal fade" id="adminOrderModal" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header bg-dark text-white">
+                    <h5 class="modal-title">📑 إنشاء طلب إداري وإسناد لمجهز</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="fw-bold mb-2">نص الطلب:</label>
+                        <textarea id="admin_raw_text" class="form-control" rows="5" placeholder="ألصق الطلب هنا للتحليل..."></textarea>
+                    </div>
+                    <div class="row mb-3">
+                        <div class="col-md-6">
+                            <label class="fw-bold mb-2">اسم المجهز:</label>
+                            <input type="text" id="admin_assignee" class="form-control" placeholder="اسم الشخص المسؤول عن التجهيز">
+                        </div>
+                        <div class="col-md-6 d-flex align-items-end">
+                            <button class="btn btn-primary w-100 fw-bold" onclick="analyzeAdminOrder()">تحليل الطلب 🔍</button>
+                        </div>
+                    </div>
+                    <div id="admin_analysis_result" class="p-3 border rounded bg-light" style="display:none">
+                        <h6 class="border-bottom pb-2 fw-bold text-primary">نتائج التحليل:</h6>
+                        <div id="analysis_content"></div>
+                        <button class="btn btn-success w-100 mt-3 fw-bold" onclick="submitAdminOrder()">تأكيد وإسناد الطلب ✅</button>
+                    </div>
+                </div>
             </div>
         </div>
     </div>
@@ -134,6 +173,7 @@
         let currentProduct = '';
         let ordersData = {};
         let currentFilter = 'new';
+        let adminParsedData = null;
 
         async function refresh() {
             try {
@@ -152,7 +192,7 @@
 
         function setFilter(f) {
             currentFilter = f;
-            document.querySelectorAll('#orderTabs .nav-link').forEach(btn => btn.classList.toggle('active', btn.getAttribute('onclick').includes(f)));
+            document.querySelectorAll('#orderTabs .nav-link').forEach(btn => btn.classList.toggle('active', btn.getAttribute('onclick')?.includes(f)));
             renderList();
         }
 
@@ -173,9 +213,12 @@
                 const isFinalized = order.places_count > 0;
                 let state = isFinalized ? 'completed' : (priced === 0 ? 'new' : 'processing');
                 if (state !== currentFilter) continue;
+
+                let assignedLabel = order.assigned_to ? `<span class="badge bg-dark ms-2">👤 مجهز: ${order.assigned_to}</span>` : '';
+
                 list.innerHTML += `<div class="card p-3 order-card" onclick="openPricing('${id}')">
                     <div class="d-flex justify-content-between align-items-center">
-                        <h5>📍 ${order.title} <span class="badge bg-secondary badge-id">#${ordersData.invoice_numbers[id] || '??'}</span></h5>
+                        <h5>📍 ${order.title} ${assignedLabel} <span class="badge bg-secondary badge-id">#${ordersData.invoice_numbers[id] || '??'}</span></h5>
                         <span class="badge ${isFinalized?'bg-success':(priced===order.products.length?'bg-info':'bg-warning text-dark')}">
                         ${isFinalized?'مكتمل':(priced===order.products.length?'انتظار 🏪':`${priced}/${order.products.length}`)}</span>
                     </div><p class="text-muted small mb-0">📞 ${order.phone_number}</p></div>`;
@@ -274,6 +317,7 @@
             bootstrap.Modal.getInstance(document.getElementById('priceModal')).hide(); refresh();
         }
         async function resetAll() { if(confirm('تصفير البيانات؟')) { await fetch('/api/reset', {method: 'POST'}); refresh(); } }
+
         document.getElementById('bulk-order-form').onsubmit = async (e) => {
             e.preventDefault();
             pendingOrderText = document.getElementById('raw_text').value;
@@ -322,6 +366,63 @@
                 refresh();
             }
         }
+
+        async function analyzeAdminOrder() {
+            const text = document.getElementById('admin_raw_text').value;
+            if(!text) return;
+            // استخدام التحليل البسيط محلياً للعرض السريع
+            const lines = text.split('\n').filter(l => l.trim());
+            const phoneMatch = text.match(/(?:\+?964|0)?7\d{9}/);
+            const phone = phoneMatch ? phoneMatch[0] : 'غير معروف';
+            const title = lines[0] || 'عنوان غير معروف';
+            const products = lines.filter(l => !l.includes(phone) && l !== title);
+
+            adminParsedData = { title, phone, products };
+
+            const content = document.getElementById('analysis_content');
+            content.innerHTML = `
+                <p><strong>📍 العنوان:</strong> ${title}</p>
+                <p><strong>📞 الهاتف:</strong> ${phone}</p>
+                <p><strong>📦 المنتجات:</strong></p>
+                <ul>${products.map(p => `<li>${p}</li>`).join('')}</ul>
+            `;
+            document.getElementById('admin_analysis_result').style.display = 'block';
+        }
+
+        async function submitAdminOrder() {
+            const assignee = document.getElementById('admin_assignee').value;
+            if(!assignee) { alert('يرجى تحديد مجهز أولاً!'); return; }
+
+            const rawText = document.getElementById('admin_raw_text').value;
+            const res = await fetch('/api/add_order', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    raw_text: rawText,
+                    assigned_to: assignee
+                })
+            });
+            const data = await res.json();
+            if (data.status === 'success' || data.status === 'needs_zone') {
+                bootstrap.Modal.getInstance(document.getElementById('adminOrderModal')).hide();
+                document.getElementById('admin_raw_text').value = '';
+                document.getElementById('admin_assignee').value = '';
+                document.getElementById('admin_analysis_result').style.display = 'none';
+                refresh();
+                if(data.status === 'needs_zone') {
+                    // إذا كان يحتاج منطقة، نفتح مودال المنطقة
+                    pendingOrderText = rawText;
+                    const suggContainer = document.getElementById('zone-suggestions');
+                    suggContainer.innerHTML = '';
+                    data.suggestions.forEach(z => {
+                        suggContainer.innerHTML += `<button type="button" class="btn btn-outline-primary m-1 btn-sm fw-bold" onclick="selectZone('${z.replace(/'/g, "\\'")}')">${z}</button>`;
+                    });
+                    document.getElementById('manual-zone-input').value = data.parsed_data.fallback_title;
+                    new bootstrap.Modal(document.getElementById('zoneModal')).show();
+                }
+            }
+        }
+
         refresh(); setInterval(refresh, 10000);
     </script>
 </body>
