@@ -120,8 +120,8 @@
                                        onkeydown="if(event.key==='Enter') saveProductPrice()">
                             </div>
                             <div class="d-flex gap-2">
-                                <button class="btn btn-success flex-grow-1 fw-bold" onclick="saveProductPrice()">حفظ السعر ✅</button>
-                                <button class="btn btn-secondary" onclick="hidePriceInput()">إلغاء التعديل ❌</button>
+                                <button class="btn btn-success flex-grow-1 fw-bold" onclick="saveProductPrice()">حفظ التعديلات ✅</button>
+                                <button class="btn btn-secondary" onclick="hidePriceInput()">إلغاء ❌</button>
                             </div>
                         </div>
                     </div>
@@ -291,6 +291,10 @@
         async function saveProductPrice() {
             const b = document.getElementById('buy-price').value; const s = document.getElementById('sell-price').value;
             if(!b || !s) return;
+
+            // تحقق إذا كان هذا المنتج مسعراً مسبقاً (أي أننا نقوم بالتعديل حالياً)
+            const isEditing = ordersData.pricing[currentOrderId] && ordersData.pricing[currentOrderId][currentProduct] && ordersData.pricing[currentOrderId][currentProduct].sell;
+
             document.getElementById('buy-price').disabled = true;
             document.getElementById('sell-price').disabled = true;
             await fetch('/api/update_price', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({order_id: currentOrderId, product: currentProduct, buy: b, sell: s})});
@@ -298,7 +302,16 @@
             ordersData.pricing[currentOrderId][currentProduct] = {buy: b, sell: s};
             document.getElementById('buy-price').disabled = false;
             document.getElementById('sell-price').disabled = false;
-            hidePriceInput(); renderProducts(); renderList(); updateNewCount();
+
+            hidePriceInput();
+            renderProducts();
+            renderList();
+            updateNewCount();
+
+            // إذا كان المستخدم يعدل سعراً موجوداً، نغلق المودال ونخرج من صفحة التعديل فوراً
+            if (isEditing) {
+                bootstrap.Modal.getInstance(document.getElementById('priceModal')).hide();
+            }
         }
 
         function hidePriceInput() { document.getElementById('price-input-area').style.display = 'none'; }
